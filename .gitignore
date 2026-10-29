@@ -32,3 +32,20 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### AI agent docs and configs ###
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+AGENTS.md
+AGENT.md
+GEMINI.md
+.gemini/
+.codex/
+.cursor/
+.cursorrules
+.windsurfrules
+.windsurf/
+.clinerules
+.github/copilot-instructions.md
+.aider*
