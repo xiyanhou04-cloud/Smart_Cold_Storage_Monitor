@@ -1,0 +1,3 @@
+spring:
+  application:
+    name: Smart_Cold_Storage_Monitor
