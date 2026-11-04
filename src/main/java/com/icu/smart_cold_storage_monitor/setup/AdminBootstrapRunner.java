@@ -18,8 +18,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>Credentials come from {@code app.bootstrap.admin.username} / {@code app.bootstrap.admin.password}
  * (environment variables {@code APP_BOOTSTRAP_ADMIN_USERNAME} / {@code APP_BOOTSTRAP_ADMIN_PASSWORD}). Without a
- * configured password a random one is generated and printed to the console once. A configured password is never
- * logged.
+ * configured password the documented default {@value InitialAdminService#DEFAULT_PASSWORD} is used and a reminder to
+ * change it is logged. A configured password is never logged.
  */
 @Component
 public class AdminBootstrapRunner implements ApplicationRunner {
@@ -46,16 +46,17 @@ public class AdminBootstrapRunner implements ApplicationRunner {
             return;
         }
         AccountCredentials admin = created.get();
-        if (admin.passwordGenerated()) {
+        if (password == null || password.isEmpty()) {
             log.warn("""
 
                     ================================================================
                      Initial administrator created (first run).
                        username: {}
-                       password: {}
-                     This password is shown only once. Store it now.
+                       password: {} (default)
+                     Change it after signing in:
+                       POST /api/users/{}/password-reset
                     ================================================================""",
-                    admin.user().username(), admin.generatedPassword());
+                    admin.user().username(), InitialAdminService.DEFAULT_PASSWORD, admin.user().id());
         } else {
             log.info("Initial administrator '{}' created with the configured password.", admin.user().username());
         }

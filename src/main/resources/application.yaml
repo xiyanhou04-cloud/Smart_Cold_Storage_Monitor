@@ -26,7 +26,7 @@ app:
     busy-timeout-ms: 5000
     max-pool-size: 4
   # Initial administrator, created on startup only when no ADMIN account exists.
-  # Defaults: username "admin" and a random password printed once to the console.
+  # Defaults: username "admin", password "12345678" (change it after the first sign-in).
   # To choose them, set APP_BOOTSTRAP_ADMIN_USERNAME / APP_BOOTSTRAP_ADMIN_PASSWORD.
   # Never commit real credentials here.
   # bootstrap:

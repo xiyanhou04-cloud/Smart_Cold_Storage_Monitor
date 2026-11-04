@@ -36,16 +36,17 @@ class AdminBootstrapRunnerTest extends SqliteIntegrationTest {
     PasswordEncoder passwordEncoder;
 
     @Test
-    void firstRunWithoutConfigurationCreatesDefaultAdminWithGeneratedPassword() {
+    void firstRunWithoutConfigurationCreatesDefaultAdminWithDefaultPassword() {
         AccountCredentials created = initialAdmin.ensureAdminExists(null, null).orElseThrow();
 
-        assertThat(created.passwordGenerated()).isTrue();
-        assertThat(created.generatedPassword()).hasSizeGreaterThanOrEqualTo(20);
+        assertThat(InitialAdminService.DEFAULT_PASSWORD).isEqualTo("12345678");
+        assertThat(created.passwordGenerated()).isFalse();
+        assertThat(created.generatedPassword()).isNull();
         User admin = users.findByUsername(InitialAdminService.DEFAULT_USERNAME).orElseThrow();
         assertThat(admin.role()).isEqualTo(Role.ADMIN);
         assertThat(admin.enabled()).isTrue();
         assertThat(admin.passwordHash()).startsWith("$2");
-        assertThat(passwordEncoder.matches(created.generatedPassword(), admin.passwordHash())).isTrue();
+        assertThat(passwordEncoder.matches("12345678", admin.passwordHash())).isTrue();
 
         assertThat(auditEvents.findRecent(10))
                 .filteredOn(e -> e.eventType() == AuditEventType.USER_CREATED)
@@ -54,7 +55,7 @@ class AdminBootstrapRunnerTest extends SqliteIntegrationTest {
                     assertThat(e.actorId()).isNull();
                     assertThat(e.targetId()).isEqualTo(String.valueOf(admin.id()));
                 })
-                .extracting(AuditEvent::details).asString().doesNotContain(created.generatedPassword());
+                .extracting(AuditEvent::details).asString().doesNotContain("12345678");
     }
 
     @Test
@@ -68,11 +69,13 @@ class AdminBootstrapRunnerTest extends SqliteIntegrationTest {
     }
 
     @Test
-    void configuredUsernameWithoutPasswordGetsGeneratedPassword() {
+    void configuredUsernameWithoutPasswordGetsDefaultPassword() {
         AccountCredentials created = initialAdmin.ensureAdminExists("ops-admin", "").orElseThrow();
 
         assertThat(created.user().username()).isEqualTo("ops-admin");
-        assertThat(created.passwordGenerated()).isTrue();
+        assertThat(created.passwordGenerated()).isFalse();
+        User admin = users.findByUsername("ops-admin").orElseThrow();
+        assertThat(passwordEncoder.matches(InitialAdminService.DEFAULT_PASSWORD, admin.passwordHash())).isTrue();
     }
 
     @Test

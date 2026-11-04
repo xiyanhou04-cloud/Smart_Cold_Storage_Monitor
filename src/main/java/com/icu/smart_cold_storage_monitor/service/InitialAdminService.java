@@ -11,12 +11,14 @@ import org.springframework.stereotype.Service;
  *
  * <p>If any ADMIN account exists, nothing happens. Otherwise one administrator is created through
  * {@link UserAccountService#createUser} (BCrypt hash plus a USER_CREATED audit event in one transaction), using the
- * configured username (default {@code admin}) and the configured password, or a random password when none is set.
+ * configured username (default {@code admin}) and the configured password, or the fixed default password
+ * {@value #DEFAULT_PASSWORD} when none is set. The default is public, so it should be changed after first sign-in.
  */
 @Service
 public class InitialAdminService {
 
     public static final String DEFAULT_USERNAME = "admin";
+    public static final String DEFAULT_PASSWORD = "12345678";
 
     private final UserRepository users;
     private final UserAccountService accounts;
@@ -30,7 +32,7 @@ public class InitialAdminService {
      * Creates the initial administrator if no administrator exists.
      *
      * @param configuredUsername username to use, or {@code null}/blank for {@value #DEFAULT_USERNAME}
-     * @param configuredPassword password to use, or {@code null}/empty to generate a random one
+     * @param configuredPassword password to use, or {@code null}/empty for {@value #DEFAULT_PASSWORD}
      * @return the created account, or empty if an administrator already existed
      */
     public Optional<AccountCredentials> ensureAdminExists(String configuredUsername, String configuredPassword) {
@@ -40,6 +42,9 @@ public class InitialAdminService {
         String username = configuredUsername == null || configuredUsername.isBlank()
                 ? DEFAULT_USERNAME
                 : configuredUsername.strip();
-        return Optional.of(accounts.createUser(username, configuredPassword, Role.ADMIN, null));
+        String password = configuredPassword == null || configuredPassword.isEmpty()
+                ? DEFAULT_PASSWORD
+                : configuredPassword;
+        return Optional.of(accounts.createUser(username, password, Role.ADMIN, null));
     }
 }
