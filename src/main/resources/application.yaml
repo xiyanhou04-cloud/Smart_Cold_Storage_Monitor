@@ -1,3 +1,35 @@
 spring:
   application:
     name: Smart_Cold_Storage_Monitor
+  sql:
+    init:
+      # schema.sql is idempotent (IF NOT EXISTS only), so running it on every startup never resets data.
+      mode: always
+      continue-on-error: false
+
+server:
+  # The local demonstration binds to localhost only (design doc §7).
+  address: 127.0.0.1
+  port: 8080
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+        # Set to true when HTTPS is enabled.
+        secure: false
+
+app:
+  database:
+    path: ./data/smart-cold-storage.db
+    busy-timeout-ms: 5000
+    max-pool-size: 4
+  # Initial administrator, created on startup only when no ADMIN account exists.
+  # Defaults: username "admin" and a random password printed once to the console.
+  # To choose them, set APP_BOOTSTRAP_ADMIN_USERNAME / APP_BOOTSTRAP_ADMIN_PASSWORD.
+  # Never commit real credentials here.
+  # bootstrap:
+  #   admin:
+  #     username:
+  #     password:

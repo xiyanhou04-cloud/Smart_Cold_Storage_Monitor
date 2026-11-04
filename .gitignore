@@ -5,6 +5,9 @@ target/
 !**/src/test/**/target/
 doc/
 
+### Local runtime data (SQLite database files) ###
+data/
+
 ### STS ###
 .apt_generated
 .classpath
