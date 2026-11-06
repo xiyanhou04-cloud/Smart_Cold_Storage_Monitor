@@ -26,7 +26,7 @@ import org.springframework.security.web.session.HttpSessionEventPublisher;
  *   <li>{@code POST /api/auth/login}  public + CSRF; form fields {@code username} and {@code password};
  *       200 JSON on success, 401 JSON on failure. The session id is rotated and a new CSRF token is issued.</li>
  *   <li>{@code POST /api/auth/logout} signed in + CSRF; invalidates the session; 204.</li>
- *   <li>{@code /api/users/**} administrators only.</li>
+ *   <li>{@code /api/users/**} and {@code /api/audit-events/**} administrators only.</li>
  *   <li>Every other {@code /api/**} path requires a signed-in user.</li>
  * </ul>
  *
@@ -50,7 +50,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
                         .requestMatchers(HttpMethod.POST, LOGIN_URL).permitAll()
                         .requestMatchers("/error").permitAll()
-                        .requestMatchers("/api/users/**").hasRole(Role.ADMIN.name())
+                        .requestMatchers("/api/users/**", "/api/audit-events/**").hasRole(Role.ADMIN.name())
                         .requestMatchers("/api/**").authenticated()
                         // Non-API paths will serve the built frontend assets.
                         .anyRequest().permitAll())

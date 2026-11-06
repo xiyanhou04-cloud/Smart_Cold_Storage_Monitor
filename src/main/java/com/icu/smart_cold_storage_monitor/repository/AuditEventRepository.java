@@ -1,12 +1,15 @@
 package com.icu.smart_cold_storage_monitor.repository;
 
+import com.icu.smart_cold_storage_monitor.model.AuditEntry;
 import com.icu.smart_cold_storage_monitor.model.AuditEvent;
 import com.icu.smart_cold_storage_monitor.model.AuditEventType;
 import com.icu.smart_cold_storage_monitor.model.AuditResult;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -55,6 +58,74 @@ public class AuditEventRepository {
                 .param("limit", limit)
                 .query(AuditEventRepository::mapRow)
                 .list();
+    }
+
+    /**
+     * One page of events matching {@code filter}, most recent first, each with the actor's username.
+     *
+     * @param offset number of matching rows to skip
+     * @param limit  maximum number of rows to return
+     */
+    public List<AuditEntry> search(AuditEventFilter filter, long offset, int limit) {
+        Map<String, Object> params = new HashMap<>();
+        String where = whereClause(filter, params);
+        params.put("limit", limit);
+        params.put("offset", offset);
+        return jdbc.sql("""
+                        SELECT e.id, e.actor_id, e.attempted_username, e.event_type, e.occurred_at, e.result,
+                               e.target_type, e.target_id, e.details, u.username AS actor_username
+                        FROM audit_events e
+                        LEFT JOIN users u ON u.id = e.actor_id
+                        """ + where + """
+                        ORDER BY e.occurred_at DESC, e.id DESC
+                        LIMIT :limit OFFSET :offset
+                        """)
+                .params(params)
+                .query((rs, rowNum) -> new AuditEntry(mapRow(rs, rowNum), rs.getString("actor_username")))
+                .list();
+    }
+
+    /** Number of events matching {@code filter}. */
+    public long count(AuditEventFilter filter) {
+        Map<String, Object> params = new HashMap<>();
+        String where = whereClause(filter, params);
+        return jdbc.sql("""
+                        SELECT COUNT(*)
+                        FROM audit_events e
+                        LEFT JOIN users u ON u.id = e.actor_id
+                        """ + where)
+                .params(params)
+                .query(Long.class)
+                .single();
+    }
+
+    /**
+     * Builds the WHERE clause from fixed SQL fragments only; every filter value is bound as a named parameter.
+     * Returns an empty string, or {@code "WHERE ...\n"}, and fills {@code params}.
+     */
+    private static String whereClause(AuditEventFilter filter, Map<String, Object> params) {
+        List<String> conditions = new ArrayList<>();
+        if (filter.from() != null) {
+            conditions.add("e.occurred_at >= :from");
+            params.put("from", SqlTimestamps.format(filter.from()));
+        }
+        if (filter.to() != null) {
+            conditions.add("e.occurred_at < :to");
+            params.put("to", SqlTimestamps.format(filter.to()));
+        }
+        if (filter.actor() != null) {
+            conditions.add("(u.username = :actor OR e.attempted_username = :actor)");
+            params.put("actor", filter.actor());
+        }
+        if (!filter.eventTypes().isEmpty()) {
+            conditions.add("e.event_type IN (:eventTypes)");
+            params.put("eventTypes", filter.eventTypes().stream().map(Enum::name).sorted().toList());
+        }
+        if (!filter.results().isEmpty()) {
+            conditions.add("e.result IN (:results)");
+            params.put("results", filter.results().stream().map(Enum::name).sorted().toList());
+        }
+        return conditions.isEmpty() ? "" : "WHERE " + String.join(" AND ", conditions) + "\n";
     }
 
     private static AuditEvent mapRow(ResultSet rs, int rowNum) throws SQLException {
