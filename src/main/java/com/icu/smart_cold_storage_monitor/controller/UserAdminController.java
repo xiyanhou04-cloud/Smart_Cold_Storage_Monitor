@@ -7,6 +7,8 @@ import com.icu.smart_cold_storage_monitor.controller.dto.UserResponse;
 import com.icu.smart_cold_storage_monitor.security.AppUserPrincipal;
 import com.icu.smart_cold_storage_monitor.service.UserAccountService;
 import com.icu.smart_cold_storage_monitor.service.UserAccountService.AccountCredentials;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Account management, restricted to ADMIN by {@code SecurityConfig}; the per-target rules (no resetting another
  * administrator's password, no deactivating administrators) live in {@link UserAccountService}.
  */
+@Tag(name = "User administration", description = "Administrator-only account management.")
 @RestController
 @RequestMapping("/api/users")
 public class UserAdminController {
@@ -41,6 +44,8 @@ public class UserAdminController {
 
     /** Creates an OPERATOR or ADMIN account; 201 with the generated password if none was supplied. */
     @PostMapping
+    @ApiResponse(responseCode = "201", description = "Account created; `generatedPassword` is returned only "
+            + "in this response, and only when no password was supplied")
     public ResponseEntity<CredentialResponse> create(@Valid @RequestBody CreateUserRequest request,
                                                      @AuthenticationPrincipal AppUserPrincipal admin) {
         AccountCredentials created = accounts.createUser(request.username(), request.password(), request.role(),

@@ -6,6 +6,7 @@ import com.icu.smart_cold_storage_monitor.model.AuditEventType;
 import com.icu.smart_cold_storage_monitor.model.AuditResult;
 import com.icu.smart_cold_storage_monitor.service.AuditReviewService;
 import com.icu.smart_cold_storage_monitor.service.PageQuery;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>{@code page} (zero-based, default 0) and {@code size} (default 50, capped at 200).</li>
  * </ul>
  */
+@Tag(name = "Audit review", description = "Administrator-only audit event history.")
 @RestController
 @RequestMapping("/api/audit-events")
 public class AuditReviewController {
