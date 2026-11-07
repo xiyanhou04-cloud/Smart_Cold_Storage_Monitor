@@ -234,7 +234,7 @@ class UserAccountServiceTest {
         assertThatThrownBy(() -> UserAccountService.validatePassword("p".repeat(73)))
                 .isInstanceOf(InvalidInputException.class);
         // 25 three-byte characters = 75 bytes, over BCrypt's 72-byte limit.
-        assertThatThrownBy(() -> UserAccountService.validatePassword("密".repeat(25)))
+        assertThatThrownBy(() -> UserAccountService.validatePassword("\u20AC".repeat(25)))
                 .isInstanceOf(InvalidInputException.class);
     }
 }

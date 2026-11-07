@@ -52,3 +52,7 @@ GEMINI.md
 .clinerules
 .github/copilot-instructions.md
 .aider*
+
+### Python test client bytecode ###
+__pycache__/
+*.py[cod]

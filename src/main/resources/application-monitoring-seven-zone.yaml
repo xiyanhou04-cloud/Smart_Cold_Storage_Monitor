@@ -1,0 +1,13 @@
+# Seven-location synthetic replay.
+app:
+  monitoring:
+    inventory-path: ./testData/SevenZone_Demo/cold_storage_demo.sqlite
+    sensor-path: ./testData/SevenZone_Demo/monitoring_timestamped.jsonl
+    location-devices:
+      RAW-MEAT: ESP32-SIM-001
+      VEG-COLD: ESP32-SIM-002
+      VEG-COOL: ESP32-SIM-003
+      EGGS: ESP32-SIM-004
+      FROZEN: ESP32-SIM-005
+      FRUIT-COLD-BERRY: ESP32-SIM-006
+      FRUIT-TROPICAL: ESP32-SIM-007

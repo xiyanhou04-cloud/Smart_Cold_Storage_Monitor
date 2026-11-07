@@ -1,0 +1,9 @@
+# Synthetic device assignments for warehouse replay only.
+app:
+  monitoring:
+    location-devices:
+      RAW-MEAT: ESP32-SIM-001
+      VEG-COLD: ESP32-SIM-002
+      VEG-COOL: ESP32-SIM-003
+      EGGS: ESP32-SIM-004
+      FROZEN: ESP32-SIM-005

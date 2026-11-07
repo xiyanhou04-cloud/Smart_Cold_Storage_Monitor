@@ -45,3 +45,12 @@ app:
   #   admin:
   #     username:
   #     password:
+
+  monitoring:
+    inventory-path: ./testData/ColdStorage_Demo/cold_storage_demo.sqlite
+    sensor-path: ./testData/SHT45_30min/monitoring_timestamped.jsonl
+    stale-after: 30s
+    expiring-soon: 24h
+    max-sensor-file-bytes: 10000000
+    # Configure location code -> device ID; no implicit cross-zone sharing.
+    location-devices: {}

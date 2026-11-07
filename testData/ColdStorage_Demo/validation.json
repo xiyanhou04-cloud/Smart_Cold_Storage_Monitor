@@ -1,0 +1,15 @@
+{
+  "counts": {
+    "products": 12,
+    "product_storage_guidance": 12,
+    "operators": 4,
+    "suppliers": 3,
+    "locations": 5,
+    "lots": 24,
+    "movements": 72
+  },
+  "integrity_check": "ok",
+  "foreign_key_violations": 0,
+  "sensor_tables": 0,
+  "entry_mode": "MANUAL_OPERATOR_ENTRY"
+}
