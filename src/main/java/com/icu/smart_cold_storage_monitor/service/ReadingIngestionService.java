@@ -2,6 +2,7 @@ package com.icu.smart_cold_storage_monitor.service;
 
 import com.icu.smart_cold_storage_monitor.model.Reading;
 import com.icu.smart_cold_storage_monitor.model.StorageSession;
+import com.icu.smart_cold_storage_monitor.model.ThresholdSetting;
 import com.icu.smart_cold_storage_monitor.repository.ReadingRepository;
 import com.icu.smart_cold_storage_monitor.repository.StorageSessionRepository;
 import com.icu.smart_cold_storage_monitor.repository.ThresholdSettingRepository;
@@ -27,8 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
  * retry (200, existing record) or a conflict (409 {@code READING_CONFLICT}); the session must exist for this
  * device (404), be active (409 {@code SESSION_NOT_ACTIVE}) and have started by the timestamp (400); the timestamp
  * must be later than the device's latest stored reading (409 {@code OUT_OF_ORDER}). Timestamps are stored at
- * millisecond precision. An accepted reading records its session's current threshold version (FR-04); alert
- * transitions will join this transaction.
+ * millisecond precision. An accepted reading records its session's current threshold version and, in the same
+ * transaction, is applied to the session's threshold alerts ({@link ThresholdAlertService}, FR-04). An identical
+ * retry or a rejected reading changes no alert. A session without a threshold version stores the reading without
+ * evaluating alerts.
  */
 @Service
 public class ReadingIngestionService {
@@ -38,13 +41,16 @@ public class ReadingIngestionService {
     private final ReadingRepository readings;
     private final StorageSessionRepository sessions;
     private final ThresholdSettingRepository thresholds;
+    private final ThresholdAlertService thresholdAlerts;
     private final Clock clock;
 
     public ReadingIngestionService(ReadingRepository readings, StorageSessionRepository sessions,
-                                   ThresholdSettingRepository thresholds, Clock clock) {
+                                   ThresholdSettingRepository thresholds, ThresholdAlertService thresholdAlerts,
+                                   Clock clock) {
         this.readings = readings;
         this.sessions = sessions;
         this.thresholds = thresholds;
+        this.thresholdAlerts = thresholdAlerts;
         this.clock = clock;
     }
 
@@ -96,9 +102,11 @@ public class ReadingIngestionService {
                     "Readings must be newer than the device's latest stored reading (" + latest.get() + ").");
         }
 
+        Optional<ThresholdSetting> threshold = thresholds.findCurrentBySession(session.id());
         Reading stored = readings.insert(submission.deviceId(), session.id(), measuredAt, now,
                 submission.temperatureC(), submission.humidityPct(),
-                thresholds.findCurrentIdBySession(session.id()).orElse(null));
+                threshold.map(ThresholdSetting::id).orElse(null));
+        threshold.ifPresent(t -> thresholdAlerts.evaluate(stored, t));
         return new IngestionResult(stored, true);
     }
 
