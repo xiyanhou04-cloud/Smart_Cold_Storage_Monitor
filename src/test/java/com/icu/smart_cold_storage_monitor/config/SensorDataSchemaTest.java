@@ -34,7 +34,7 @@ class SensorDataSchemaTest extends SqliteIntegrationTest {
     @Test
     void schemaCreatesSensorDataTables() {
         assertThat(jdbc.sql("SELECT name FROM sqlite_master WHERE type = 'table'").query(String.class).list())
-            .contains("devices", "storage_sessions", "threshold_settings", "readings");
+            .contains("devices", "storage_sessions", "threshold_settings", "threshold_change_requests", "readings");
     }
 
     @Test
@@ -138,6 +138,43 @@ class SensorDataSchemaTest extends SqliteIntegrationTest {
     }
 
     @Test
+    void thresholdHumidityLimitsAreBothOrNeitherAndOrdered() {
+        assertThatCode(() -> humidityThreshold(session1, 55.0, 80.0)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> humidityThreshold(session1, 55.0, null))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> humidityThreshold(session1, null, 80.0))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> humidityThreshold(session1, 80.0, 80.0))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> humidityThreshold(session1, -1.0, 80.0))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> humidityThreshold(session1, 55.0, 100.5))
+            .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void onlyOnePendingThresholdRequestPerDevice() {
+        long base = humidityThreshold(session1, 55.0, 80.0);
+        long operator = jdbc.sql("""
+                INSERT INTO users (username, password_hash, role, created_at) VALUES ('op1', 'x', 'OPERATOR', ?)
+                RETURNING id""").param(T0).query(Long.class).single();
+        String insert = """
+                INSERT INTO threshold_change_requests (device_id, base_threshold_id, lower_c, upper_c,
+                    lower_humidity_pct, upper_humidity_pct, status, requested_by, requested_at, reviewed_at)
+                VALUES ('ESP32-SIM-001', ?, 0, 4, 55, 80, ?, ?, ?, ?)""";
+        jdbc.sql(insert).params(base, "PENDING", operator, T0, null).update();
+        jdbc.sql(insert).params(base, "REJECTED", operator, T0, T1).update();
+
+        assertThatThrownBy(() -> jdbc.sql(insert).params(base, "PENDING", operator, T1, null).update())
+            .isInstanceOf(DuplicateKeyException.class);
+        // A concluded request needs its review time, and only an approval names an applied version.
+        assertThatThrownBy(() -> jdbc.sql(insert).params(base, "CANCELLED", operator, T1, null).update())
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.sql(insert).params(base, "APPROVED", operator, T1, T1).update())
+            .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void deviceLocationIsOptionalButNotBlankOrTooLong() {
         assertThat(jdbc.sql("SELECT location_code IS NULL FROM devices WHERE id = 'ESP32-SIM-001'")
             .query(Boolean.class).single()).isTrue();
@@ -181,6 +218,15 @@ class SensorDataSchemaTest extends SqliteIntegrationTest {
     private long threshold(long session, double lower, double upper) {
         return jdbc.sql("""
                 INSERT INTO threshold_settings (session_id, lower_c, upper_c, effective_from) VALUES (?, ?, ?, ?)
+                RETURNING id
+                """).params(session, lower, upper, T0).query(Long.class).single();
+    }
+
+    private long humidityThreshold(long session, Double lower, Double upper) {
+        return jdbc.sql("""
+                INSERT INTO threshold_settings (session_id, lower_c, upper_c, lower_humidity_pct, upper_humidity_pct,
+                                                effective_from)
+                VALUES (?, 0, 4, ?, ?, ?)
                 RETURNING id
                 """).params(session, lower, upper, T0).query(Long.class).single();
     }

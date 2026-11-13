@@ -4,6 +4,7 @@ import com.icu.smart_cold_storage_monitor.model.StorageSession;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -32,6 +33,13 @@ public class StorageSessionRepository {
                 .param("deviceId", deviceId)
                 .query(StorageSessionRepository::mapRow)
                 .optional();
+    }
+
+    /** Every active session (at most one per device), in device order. */
+    public List<StorageSession> findAllActive() {
+        return jdbc.sql("SELECT " + COLUMNS + " FROM storage_sessions WHERE ended_at IS NULL ORDER BY device_id")
+                .query(StorageSessionRepository::mapRow)
+                .list();
     }
 
     /** Inserts an active session; a second active session for the device raises {@code DuplicateKeyException}. */

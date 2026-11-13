@@ -104,6 +104,7 @@ class ReadingQueryApiTest extends SqliteIntegrationTest {
     @Test
     void noRegisteredDevicesGivesAnEmptyObject() throws Exception {
         jdbc.sql("DELETE FROM readings").update();
+        jdbc.sql("DELETE FROM threshold_settings").update();
         jdbc.sql("DELETE FROM storage_sessions").update();
         jdbc.sql("DELETE FROM devices").update();
 

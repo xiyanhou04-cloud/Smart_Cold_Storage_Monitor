@@ -69,17 +69,24 @@ CREATE TABLE IF NOT EXISTS storage_sessions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_sessions_one_active
     ON storage_sessions (device_id) WHERE ended_at IS NULL;
 
--- Versioned temperature limits: every change inserts a new row and never rewrites an old one.
--- A reading records the version that applied to it. changed_by is NULL for a version the
--- system created. UNIQUE (id, session_id) lets readings check that the version is their session's.
+-- Versioned temperature and humidity limits (FR-04): every change inserts a new row and never
+-- rewrites an old one; the session's current version is its row with the highest id. A reading
+-- records the version that applied to it. changed_by is NULL for a version the system created
+-- (the location default given to a new session). UNIQUE (id, session_id) lets readings check that
+-- the version is their session's.
+-- The humidity columns were added after the table was first released, so they are nullable and
+-- also listed in setup/SchemaUpgradeOnStartup; the application always writes both. Their checks
+-- require both or neither, each within 0..100, and lower < upper.
 CREATE TABLE IF NOT EXISTS threshold_settings (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id     INTEGER NOT NULL REFERENCES storage_sessions (id),
-    lower_c        REAL    NOT NULL,
-    upper_c        REAL    NOT NULL,
-    effective_from TEXT    NOT NULL
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id         INTEGER NOT NULL REFERENCES storage_sessions (id),
+    lower_c            REAL    NOT NULL,
+    upper_c            REAL    NOT NULL,
+    effective_from     TEXT    NOT NULL
         CHECK (effective_from GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'),
-    changed_by     INTEGER REFERENCES users (id),
+    changed_by         INTEGER REFERENCES users (id),
+    lower_humidity_pct REAL CHECK (lower_humidity_pct IS NULL OR lower_humidity_pct BETWEEN 0 AND 100),
+    upper_humidity_pct REAL CHECK ((upper_humidity_pct IS NULL) = (lower_humidity_pct IS NULL) AND (upper_humidity_pct IS NULL OR (upper_humidity_pct BETWEEN 0 AND 100 AND lower_humidity_pct < upper_humidity_pct))),
     CHECK (lower_c BETWEEN -273.15 AND 1000 AND upper_c BETWEEN -273.15 AND 1000 AND lower_c < upper_c),
     UNIQUE (id, session_id)
 );
@@ -87,11 +94,46 @@ CREATE TABLE IF NOT EXISTS threshold_settings (
 CREATE INDEX IF NOT EXISTS idx_threshold_settings_session_time
     ON threshold_settings (session_id, effective_from);
 
+-- An operator's proposed threshold change for one device, applied only when an administrator
+-- approves it. base_threshold_id is the version that was current when the request was made;
+-- approval is refused when the device's current version is no longer that one.
+-- applied_threshold_id is the version an approval created. Status changes keep the row: a request
+-- is never deleted. idx_threshold_change_requests_one_pending allows one PENDING request per device.
+CREATE TABLE IF NOT EXISTS threshold_change_requests (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id            TEXT    NOT NULL REFERENCES devices (id),
+    base_threshold_id    INTEGER NOT NULL REFERENCES threshold_settings (id),
+    lower_c              REAL    NOT NULL,
+    upper_c              REAL    NOT NULL,
+    lower_humidity_pct   REAL    NOT NULL,
+    upper_humidity_pct   REAL    NOT NULL,
+    status               TEXT    NOT NULL
+        CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'SUPERSEDED')),
+    requested_by         INTEGER NOT NULL REFERENCES users (id),
+    requested_at         TEXT    NOT NULL
+        CHECK (requested_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'),
+    reviewed_by          INTEGER REFERENCES users (id),
+    reviewed_at          TEXT
+        CHECK (reviewed_at IS NULL OR reviewed_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'),
+    review_note          TEXT    CHECK (review_note IS NULL OR length(review_note) <= 500),
+    applied_threshold_id INTEGER REFERENCES threshold_settings (id),
+    CHECK (lower_c BETWEEN -273.15 AND 1000 AND upper_c BETWEEN -273.15 AND 1000 AND lower_c < upper_c),
+    CHECK (lower_humidity_pct BETWEEN 0 AND 100 AND upper_humidity_pct BETWEEN 0 AND 100
+           AND lower_humidity_pct < upper_humidity_pct),
+    CHECK ((status = 'PENDING') = (reviewed_at IS NULL)),
+    CHECK ((status = 'APPROVED') = (applied_threshold_id IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_threshold_change_requests_one_pending
+    ON threshold_change_requests (device_id) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_threshold_change_requests_time
+    ON threshold_change_requests (requested_at);
+
 -- One accepted sensor reading. UNIQUE (device_id, measured_at) makes a retried submission find
 -- the existing row instead of inserting a duplicate (its index also serves latest-per-device and
 -- out-of-order checks). The composite foreign keys keep the session on the same device and the
--- threshold version on the same session. threshold_id stays NULL until threshold versioning
--- (FR-04) is implemented. The value CHECKs are a storage backstop (they also reject infinity),
+-- threshold version on the same session. threshold_id is the session's current version when the
+-- reading was accepted (NULL only if the session had none). The value CHECKs are a storage backstop (they also reject infinity),
 -- and the ingestion service applies the stricter plausibility rules.
 CREATE TABLE IF NOT EXISTS readings (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

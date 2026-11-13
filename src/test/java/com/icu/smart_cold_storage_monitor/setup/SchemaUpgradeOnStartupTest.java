@@ -59,6 +59,39 @@ class SchemaUpgradeOnStartupTest {
     }
 
     @Test
+    void addsTheHumidityColumnsToAnOldThresholdTableWithTheirChecks() {
+        // threshold_settings as created by the build before humidity limits existed.
+        jdbc.sql("CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, location_code TEXT)").update();
+        jdbc.sql("""
+                CREATE TABLE storage_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL,
+                    product_type TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, UNIQUE (id, device_id))""")
+                .update();
+        jdbc.sql("""
+                CREATE TABLE threshold_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+                    lower_c REAL NOT NULL, upper_c REAL NOT NULL, effective_from TEXT NOT NULL, changed_by INTEGER,
+                    UNIQUE (id, session_id))""").update();
+        jdbc.sql("INSERT INTO devices (id, name) VALUES ('D1', 'Device 1')").update();
+        jdbc.sql("INSERT INTO storage_sessions (device_id, product_type, started_at) VALUES ('D1', 'X', "
+                + "'2026-11-12T08:00:00.000Z')").update();
+        jdbc.sql("INSERT INTO threshold_settings (session_id, lower_c, upper_c, effective_from) VALUES (1, 0, 4, "
+                + "'2026-11-12T08:00:00.000Z')").update();
+        new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(dataSource);
+
+        assertThat(upgrader.upgrade()).isEqualTo(2);
+
+        assertThat(jdbc.sql("SELECT lower_humidity_pct IS NULL AND upper_humidity_pct IS NULL FROM threshold_settings")
+                .query(Boolean.class).single()).isTrue();
+        String insert = "INSERT INTO threshold_settings (session_id, lower_c, upper_c, effective_from, "
+                + "lower_humidity_pct, upper_humidity_pct) VALUES (1, 0, 4, '2026-11-12T08:00:01.000Z', ?, ?)";
+        jdbc.sql(insert).params(55.0, 80.0).update();
+        assertThatThrownBy(() -> jdbc.sql(insert).params(55.0, null).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.sql(insert).params(80.0, 55.0).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(upgrader.upgrade()).isZero();
+    }
+
+    @Test
     void aDatabaseCreatedFromTheCurrentSchemaNeedsNoUpgrade() {
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(dataSource);
 

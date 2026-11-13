@@ -25,6 +25,13 @@ public class DeviceRepository {
                 .optional();
     }
 
+    /** Every registered device (enabled or not), in id order. */
+    public List<Device> findAll() {
+        return jdbc.sql("SELECT id, name, enabled, location_code FROM devices ORDER BY id")
+                .query(DeviceRepository::mapRow)
+                .list();
+    }
+
     /** Ids of every registered device (enabled or not), in id order. */
     public List<String> findAllIds() {
         return jdbc.sql("SELECT id FROM devices ORDER BY id").query(String.class).list();

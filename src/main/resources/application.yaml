@@ -64,6 +64,22 @@ app:
     interval: 5s
     devices: []
 
+  # Default threshold limits (FR-04). Every new storage session starts with the limits of its device's
+  # location_code; a device without a known location gets the fallback. Users change them later through
+  # PUT /api/settings/thresholds/{deviceId}. The location values are the zone targets of the
+  # seven-zone demo inventory (testData/SevenZone_Demo/cold_storage_demo.sqlite, table locations).
+  # Keep map keys in brackets so the location code is bound exactly as written.
+  thresholds:
+    fallback:          { temperature-lower-c: 0.0,   temperature-upper-c: 8.0,   humidity-lower-pct: 30.0, humidity-upper-pct: 95.0 }
+    locations:
+      "[VEG-COLD]":         { temperature-lower-c: 0.0,   temperature-upper-c: 2.2,   humidity-lower-pct: 95.0, humidity-upper-pct: 98.0 }
+      "[VEG-COOL]":         { temperature-lower-c: 10.0,  temperature-upper-c: 12.2,  humidity-lower-pct: 90.0, humidity-upper-pct: 95.0 }
+      "[RAW-MEAT]":         { temperature-lower-c: 0.0,   temperature-upper-c: 4.0,   humidity-lower-pct: 55.0, humidity-upper-pct: 80.0 }
+      "[EGGS]":             { temperature-lower-c: 0.0,   temperature-upper-c: 4.0,   humidity-lower-pct: 55.0, humidity-upper-pct: 80.0 }
+      "[FROZEN]":           { temperature-lower-c: -25.0, temperature-upper-c: -18.0, humidity-lower-pct: 35.0, humidity-upper-pct: 80.0 }
+      "[FRUIT-COLD-BERRY]": { temperature-lower-c: -0.5,  temperature-upper-c: 0.5,   humidity-lower-pct: 90.0, humidity-upper-pct: 95.0 }
+      "[FRUIT-TROPICAL]":   { temperature-lower-c: 13.0,  temperature-upper-c: 14.0,  humidity-lower-pct: 90.0, humidity-upper-pct: 95.0 }
+
   monitoring:
     inventory-path: ./testData/ColdStorage_Demo/cold_storage_demo.sqlite
     sensor-path: ./testData/SHT45_30min/monitoring_timestamped.jsonl

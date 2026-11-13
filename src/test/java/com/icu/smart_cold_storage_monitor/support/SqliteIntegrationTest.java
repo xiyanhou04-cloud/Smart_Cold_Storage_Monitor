@@ -38,6 +38,7 @@ public abstract class SqliteIntegrationTest {
     void cleanDatabase() {
         // Children before parents because foreign keys are enforced.
         jdbc.sql("DELETE FROM readings").update();
+        jdbc.sql("DELETE FROM threshold_change_requests").update();
         jdbc.sql("DELETE FROM threshold_settings").update();
         jdbc.sql("DELETE FROM storage_sessions").update();
         jdbc.sql("DELETE FROM devices").update();

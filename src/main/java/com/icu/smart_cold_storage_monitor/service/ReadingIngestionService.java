@@ -4,6 +4,7 @@ import com.icu.smart_cold_storage_monitor.model.Reading;
 import com.icu.smart_cold_storage_monitor.model.StorageSession;
 import com.icu.smart_cold_storage_monitor.repository.ReadingRepository;
 import com.icu.smart_cold_storage_monitor.repository.StorageSessionRepository;
+import com.icu.smart_cold_storage_monitor.repository.ThresholdSettingRepository;
 import com.icu.smart_cold_storage_monitor.service.exception.ConflictException;
 import com.icu.smart_cold_storage_monitor.service.exception.InvalidInputException;
 import com.icu.smart_cold_storage_monitor.service.exception.NotFoundException;
@@ -26,7 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
  * retry (200, existing record) or a conflict (409 {@code READING_CONFLICT}); the session must exist for this
  * device (404), be active (409 {@code SESSION_NOT_ACTIVE}) and have started by the timestamp (400); the timestamp
  * must be later than the device's latest stored reading (409 {@code OUT_OF_ORDER}). Timestamps are stored at
- * millisecond precision. Threshold versions and alert transitions join this transaction with FR-04.
+ * millisecond precision. An accepted reading records its session's current threshold version (FR-04); alert
+ * transitions will join this transaction.
  */
 @Service
 public class ReadingIngestionService {
@@ -35,11 +37,14 @@ public class ReadingIngestionService {
 
     private final ReadingRepository readings;
     private final StorageSessionRepository sessions;
+    private final ThresholdSettingRepository thresholds;
     private final Clock clock;
 
-    public ReadingIngestionService(ReadingRepository readings, StorageSessionRepository sessions, Clock clock) {
+    public ReadingIngestionService(ReadingRepository readings, StorageSessionRepository sessions,
+                                   ThresholdSettingRepository thresholds, Clock clock) {
         this.readings = readings;
         this.sessions = sessions;
+        this.thresholds = thresholds;
         this.clock = clock;
     }
 
@@ -92,7 +97,8 @@ public class ReadingIngestionService {
         }
 
         Reading stored = readings.insert(submission.deviceId(), session.id(), measuredAt, now,
-                submission.temperatureC(), submission.humidityPct(), null);
+                submission.temperatureC(), submission.humidityPct(),
+                thresholds.findCurrentIdBySession(session.id()).orElse(null));
         return new IngestionResult(stored, true);
     }
 

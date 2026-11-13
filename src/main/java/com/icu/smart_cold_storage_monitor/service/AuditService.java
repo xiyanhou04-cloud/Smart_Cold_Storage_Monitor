@@ -21,6 +21,8 @@ public class AuditService {
     /** Bound for usernames typed into a failed login, matching the column constraint. */
     public static final int MAX_ATTEMPTED_USERNAME_LENGTH = 64;
     static final int MAX_TEXT_LENGTH = 500;
+    static final String THRESHOLD_SETTING = "THRESHOLD_SETTING";
+    static final String THRESHOLD_CHANGE_REQUEST = "THRESHOLD_CHANGE_REQUEST";
 
     private final AuditEventRepository repository;
     private final Clock clock;
@@ -68,6 +70,32 @@ public class AuditService {
     public void recordStorageSessionStarted(Long actorId, long sessionId, String details) {
         record(actorId, null, AuditEventType.STORAGE_SESSION_STARTED, AuditResult.SUCCESS, "STORAGE_SESSION",
                 String.valueOf(sessionId), details);
+    }
+
+    /** Records a new current threshold version; {@code details} carries the old and new limits. */
+    public void recordThresholdChanged(long actorId, long thresholdId, String details) {
+        record(actorId, null, AuditEventType.THRESHOLD_CHANGED, AuditResult.SUCCESS, THRESHOLD_SETTING,
+                String.valueOf(thresholdId), details);
+    }
+
+    public void recordThresholdChangeRequested(long actorId, long requestId, String details) {
+        record(actorId, null, AuditEventType.THRESHOLD_CHANGE_REQUESTED, AuditResult.SUCCESS,
+                THRESHOLD_CHANGE_REQUEST, String.valueOf(requestId), details);
+    }
+
+    public void recordThresholdChangeApproved(long actorId, long requestId, String details) {
+        record(actorId, null, AuditEventType.THRESHOLD_CHANGE_APPROVED, AuditResult.SUCCESS,
+                THRESHOLD_CHANGE_REQUEST, String.valueOf(requestId), details);
+    }
+
+    public void recordThresholdChangeRejected(long actorId, long requestId, String details) {
+        record(actorId, null, AuditEventType.THRESHOLD_CHANGE_REJECTED, AuditResult.SUCCESS,
+                THRESHOLD_CHANGE_REQUEST, String.valueOf(requestId), details);
+    }
+
+    public void recordThresholdChangeCancelled(long actorId, long requestId, String details) {
+        record(actorId, null, AuditEventType.THRESHOLD_CHANGE_CANCELLED, AuditResult.SUCCESS,
+                THRESHOLD_CHANGE_REQUEST, String.valueOf(requestId), details);
     }
 
     private void record(Long actorId, String attemptedUsername, AuditEventType type, AuditResult result,

@@ -62,6 +62,21 @@ class OpenApiDocsTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/readings/query'].get.security[0].csrf").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/readings/query'].get.parameters[?(@.name == 'deviceId')]").exists())
                 .andExpect(jsonPath("$.paths['/api/readings/query'].get.parameters[?(@.name == 'metric')]").exists())
+                // Threshold settings: GETs need the session, changes the session and CSRF.
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds'].get.security[0].session").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds'].get.security[0].csrf").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds/{deviceId}'].put.security[0].session").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds/{deviceId}'].put.security[0].csrf").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds/{deviceId}'].put.responses['202']").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/thresholds/{deviceId}'].put.parameters[0].name")
+                        .value("deviceId"))
+                .andExpect(jsonPath("$.paths['/api/settings/threshold-requests'].get.parameters[?(@.name == "
+                        + "'status')]").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/threshold-requests/{id}/approval'].post.security[0]"
+                        + ".csrf").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/threshold-requests/{id}/rejection'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/settings/threshold-requests/{id}/cancellation'].post"
+                        + ".parameters[?(@.name == 'user')]").doesNotExist())
                 // The CsrfToken and principal method arguments are framework-injected, not client parameters.
                 .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/auth/me'].get.parameters").doesNotExist());

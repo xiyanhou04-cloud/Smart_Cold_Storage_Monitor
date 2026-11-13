@@ -28,7 +28,14 @@ public class SchemaUpgradeOnStartup implements InitializingBean {
     /** Fixed SQL only: table and column names cannot be bound as parameters. Keep in sync with schema.sql. */
     static final List<AddColumn> UPGRADES = List.of(
             new AddColumn("devices", "location_code",
-                    "TEXT CHECK (location_code IS NULL OR length(location_code) BETWEEN 1 AND 64)"));
+                    "TEXT CHECK (location_code IS NULL OR length(location_code) BETWEEN 1 AND 64)"),
+            new AddColumn("threshold_settings", "lower_humidity_pct",
+                    "REAL CHECK (lower_humidity_pct IS NULL OR lower_humidity_pct BETWEEN 0 AND 100)"),
+            // Added after lower_humidity_pct, so its check may refer to that column.
+            new AddColumn("threshold_settings", "upper_humidity_pct",
+                    "REAL CHECK ((upper_humidity_pct IS NULL) = (lower_humidity_pct IS NULL) AND "
+                            + "(upper_humidity_pct IS NULL OR (upper_humidity_pct BETWEEN 0 AND 100 "
+                            + "AND lower_humidity_pct < upper_humidity_pct)))"));
 
     private static final Logger log = LoggerFactory.getLogger(SchemaUpgradeOnStartup.class);
 

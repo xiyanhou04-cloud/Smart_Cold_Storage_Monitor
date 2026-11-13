@@ -51,6 +51,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, LOGIN_URL).permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/users/**", "/api/audit-events/**").hasRole(Role.ADMIN.name())
+                        // Operators may set thresholds (as requests) and cancel their own requests; only an
+                        // administrator reviews them.
+                        .requestMatchers(HttpMethod.POST, "/api/settings/threshold-requests/*/approval",
+                                "/api/settings/threshold-requests/*/rejection").hasRole(Role.ADMIN.name())
                         .requestMatchers("/api/**").authenticated()
                         // Non-API paths will serve the built frontend assets.
                         .anyRequest().permitAll())

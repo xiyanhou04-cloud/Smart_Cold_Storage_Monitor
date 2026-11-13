@@ -76,10 +76,15 @@ class ReadingIngestionApiTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.temperatureC").value(4.0032))
                 .andExpect(jsonPath("$.humidityPct").value(69.99565))
                 .andExpect(jsonPath("$.receivedAt").isString())
-                .andExpect(jsonPath("$.thresholdId").doesNotExist());
+                .andExpect(jsonPath("$.thresholdId").isNumber());
 
         assertThat(jdbc.sql("SELECT measured_at FROM readings WHERE device_id = ?").param(DEVICE)
                 .query(String.class).single()).isEqualTo(canonical(base));
+        // The reading records the session's current threshold version (the location default here).
+        assertThat(jdbc.sql("SELECT threshold_id FROM readings WHERE device_id = ?").param(DEVICE)
+                .query(Long.class).single())
+                .isEqualTo(jdbc.sql("SELECT max(id) FROM threshold_settings WHERE session_id = ?").param(session)
+                        .query(Long.class).single());
     }
 
     @Test
