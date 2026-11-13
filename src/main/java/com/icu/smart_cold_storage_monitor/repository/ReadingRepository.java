@@ -4,6 +4,8 @@ import com.icu.smart_cold_storage_monitor.model.Reading;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -58,6 +60,26 @@ public class ReadingRepository {
                 .param("thresholdId", thresholdId)
                 .query(ReadingRepository::mapRow)
                 .single();
+    }
+
+    /**
+     * Readings of the given devices measured in {@code [from, to)}, ordered by device and then by time. Uses the
+     * {@code UNIQUE (device_id, measured_at)} index for each device.
+     */
+    public List<Reading> findByDevicesAndTimeRange(Collection<String> deviceIds, Instant from, Instant to) {
+        if (deviceIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("SELECT " + COLUMNS + """
+                         FROM readings
+                        WHERE device_id IN (:deviceIds) AND measured_at >= :from AND measured_at < :to
+                        ORDER BY device_id, measured_at
+                        """)
+                .param("deviceIds", List.copyOf(deviceIds))
+                .param("from", SqlTimestamps.format(from))
+                .param("to", SqlTimestamps.format(to))
+                .query(ReadingRepository::mapRow)
+                .list();
     }
 
     /** Deletes every reading and returns how many were removed. */

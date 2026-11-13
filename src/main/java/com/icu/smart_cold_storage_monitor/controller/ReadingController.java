@@ -22,9 +22,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Device ingestion endpoint; authenticated by {@code DeviceIngestionSecurityConfig}, never by a browser session. */
-@Tag(name = "Sensor readings", description = "Device ingestion of temperature and humidity readings.")
+@Tag(name = ReadingController.TAG, description = ReadingController.TAG_DESCRIPTION)
 @RestController
 public class ReadingController {
+
+    static final String TAG = "Sensor readings";
+    static final String TAG_DESCRIPTION =
+            "Device ingestion and dashboard queries of temperature and humidity readings.";
 
     private final ReadingIngestionService ingestion;
 

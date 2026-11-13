@@ -57,6 +57,11 @@ class OpenApiDocsTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/readings'].post.parameters").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/readings'].post.responses['201']").exists())
                 .andExpect(jsonPath("$.components.securitySchemes.device.name").value("Authorization"))
+                // The dashboard query is a signed-in GET: session only.
+                .andExpect(jsonPath("$.paths['/api/readings/query'].get.security[0].session").exists())
+                .andExpect(jsonPath("$.paths['/api/readings/query'].get.security[0].csrf").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/readings/query'].get.parameters[?(@.name == 'deviceId')]").exists())
+                .andExpect(jsonPath("$.paths['/api/readings/query'].get.parameters[?(@.name == 'metric')]").exists())
                 // The CsrfToken and principal method arguments are framework-injected, not client parameters.
                 .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/auth/me'].get.parameters").doesNotExist());

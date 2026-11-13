@@ -124,6 +124,31 @@ As soon as the backend is running (no profile needed, nobody has to sign in), it
 
 Rejected readings change nothing. Timestamps are stored to the millisecond. `threshold_id` stays empty until versioned thresholds (FR-04) exist. The startup log shows `Sensor simulator started: 7 device(s) ...`; to see every accepted reading, set `logging.level.com.icu.smart_cold_storage_monitor.simulator=DEBUG` (rejected ones are logged at WARN). The table grows by about 120,000 rows per day of uptime. **To keep the database small, every start empties `readings`** before the HTTP server opens (log line `Cleared N stored reading(s) on startup`); devices, storage sessions, and audit events are kept. Set `APP_READINGS_CLEAR_ON_STARTUP=false` to keep readings across restarts, for example to demonstrate the design's restart-persistence requirement or to collect history for model training. Set `APP_SIMULATOR_ENABLED=false` to stop the loop; devices and sessions are still provisioned so an external simulator can post instead.
 
+### Query readings for the dashboard (FR-03)
+
+`GET /api/readings/query` returns stored readings grouped by device for trend charts. Any signed-in user (OPERATOR or ADMIN) may call it; without a session it returns 401. All parameters are optional:
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `deviceId` | Device id; repeat or comma-separate for several (at most 50). An unknown id is a 400. | every registered device |
+| `metric` | `temperature` and/or `humidity`; repeat or comma-separate | both |
+| `window` | Length of the range ending at `to`, e.g. `PT10M` or `10m`; not together with `from` | 5 minutes |
+| `from` / `to` | UTC instants; `from` inclusive, `to` exclusive | `to` = now, `from` = `to` − `window` |
+
+The range may span at most 6 hours. The top level of the response is keyed by device id (in id order); each device has `temperatureC` and/or `humidityPct`, each a list of `{timestamp, value}` points, oldest first. A metric that was not requested is omitted; a requested device without readings in the range has empty lists.
+
+```json
+{
+  "ESP32-SIM-001": {
+    "temperatureC": [{"timestamp": "2026-11-13T07:27:32.849Z", "value": 4.0032}],
+    "humidityPct":  [{"timestamp": "2026-11-13T07:27:32.849Z", "value": 69.99565}]
+  },
+  "ESP32-SIM-005": {"temperatureC": [], "humidityPct": []}
+}
+```
+
+Example: `GET /api/readings/query?deviceId=ESP32-SIM-001,ESP32-SIM-005&metric=humidity&window=10m`. Because readings are cleared on startup by default, only data since the last start is available.
+
 ### Run the Java reading simulator from the command line
 
 The simulator replays the seven-zone recording in `data/monitoring_timestamped.jsonl` (a copy of `testData/SevenZone_Demo/monitoring_timestamped.jsonl`, 361 samples per device). Each tick sends one reading per device; after a device's last sample it wraps to the first. Every reading carries the **actual send time** (UTC, milliseconds), not the recorded `measured_at`, so readings from consecutive loops always move forward in time. It is a scenario replay, not live sensing.
@@ -159,6 +184,7 @@ To try the account and audit features, open Swagger UI at <http://127.0.0.1:8080
 | `GET/POST /api/users`, `POST /api/users/{id}/password-reset`, `POST /api/users/{id}/deactivation` | ADMIN | Account management |
 | `GET /api/audit-events` | ADMIN | Audit review, filter by time, actor, event type, result; paged |
 | `POST /api/readings` | device credential | Ingest one reading (`Authorization: Device <deviceId>:<token>`); no session or CSRF |
+| `GET /api/readings/query` | signed in | Readings grouped by device, temperature and humidity as separate lists; filter by device, metric, time range |
 | `POST /api/telemetry/readings` | device token | Ingest one reading (`X-Device-Id`, `X-Device-Token`); `monitoring-live` only |
 | `GET /api/telemetry/samples`, `GET /api/monitoring/alerts`, `GET /api/monitoring/alert-events` | signed in | Stored samples, current/closed zone alerts, ordered alert events |
 | `GET /api/monitoring/assessments`, `GET /api/monitoring/replay/assessments` | signed in | Per-lot condition assessment (live and as-of replay) |
@@ -172,7 +198,7 @@ More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERT
 |---|---|---|
 | FR-01 User login and logout | Complete | Session login/logout, BCrypt, CSRF, roles (OPERATOR, ADMIN), session expiry on password reset or deactivation, first-run admin. Admins create, reset, and deactivate accounts. |
 | FR-02 Sensor data ingestion | Mostly complete | Design-conformant `POST /api/readings`: device credential only (no cookie, CSRF-exempt), deviceId must match the credential, active session required, humidity 0 to 100, finite values, timestamp at most 60 s ahead, 201 new / 200 identical retry / 409 conflict or out of order, stored in `readings` with `UNIQUE(device_id, measured_at)`. On startup the backend provisions the seven devices with active storage sessions and its built-in Java simulator posts the recorded samples to this endpoint every 5 seconds with send-time timestamps, with nobody signed in. Not yet: admin storage-session API (`POST /api/storage-sessions`), threshold version and alert transition in the ingestion transaction (FR-04). The prototype's `POST /api/telemetry/readings` (`monitoring-live` profile) is unchanged. |
-| FR-03 Dashboard | Not started | No frontend yet. Polling-ready JSON endpoints exist (assessments, alerts, alert events). |
+| FR-03 Dashboard | Partial (backend) | `GET /api/readings/query` returns chart-ready temperature and humidity series per device (default: all devices, both metrics, last 5 minutes; filters for devices, metric, and time range up to 6 hours), for any signed-in user. Not yet: the React frontend, `GET /api/readings/latest` with freshness for the stale-input indication, and per-session selection. |
 | FR-04 Threshold alerts | Partial | Eight zone alert types (temperature/humidity low and high, sensor missing and invalid). One incident per type, evaluated every 5 seconds, closed on recovery. Limits come from the inventory database; configurable, versioned thresholds (`/api/settings/thresholds`) are not built. |
 | FR-05 Risk prediction | Not started | No Weka model, `RiskPredictor`, or rules fallback. The lot-level condition assessment (OK, WARNING, ACTION_REQUIRED, UNKNOWN) is a rule check, not a risk prediction. |
 | FR-06 Alert acknowledgment | Not started | Alerts open and close automatically; no acknowledgment endpoint or note. |
@@ -183,8 +209,8 @@ More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERT
 
 ## Testing So Far
 
-- JUnit 5, Spring Boot Test, and MockMvc. Integration tests use temporary SQLite files (never another engine). Coverage: database configuration (foreign keys, WAL, transactions), login/logout/CSRF/session behavior, role enforcement, account management, audit writing and review filters, paging, first-run admin creation, OpenAPI document, the zone assessment engine, SHT45 decoding and replay, the monitoring API, the sensor data table constraints (unique device/time, one active session per device, session and threshold ownership, value and timestamp checks), the Java simulator (scenario loading and checks, looping and send-time stamps, retries with the identical payload, HTTP sending against a stub server, options), and reading ingestion (every status in the ingestion table, device credentials, cookie rejection, no CSRF or session, session provisioning and its audit event, the built-in simulator storing readings on a real server port, and the command-line simulator posting to a real server, and clearing readings on startup).
-- 211 tests across 27 test classes; all passed on 2026-11-12 (`.\mvnw.cmd test`, 0 failures, 0 errors, 0 skipped).
+- JUnit 5, Spring Boot Test, and MockMvc. Integration tests use temporary SQLite files (never another engine). Coverage: database configuration (foreign keys, WAL, transactions), login/logout/CSRF/session behavior, role enforcement, account management, audit writing and review filters, paging, first-run admin creation, OpenAPI document, the zone assessment engine, SHT45 decoding and replay, the monitoring API, the sensor data table constraints (unique device/time, one active session per device, session and threshold ownership, value and timestamp checks), the Java simulator (scenario loading and checks, looping and send-time stamps, retries with the identical payload, HTTP sending against a stub server, options), and reading ingestion (every status in the ingestion table, device credentials, cookie rejection, no CSRF or session, session provisioning and its audit event, the built-in simulator storing readings on a real server port, and the command-line simulator posting to a real server, and clearing readings on startup), and the dashboard reading query (sign-in for both roles, defaults, device and metric filters, window and from/to ranges with inclusive start and exclusive end, invalid ranges, unknown devices).
+- 227 tests across 28 test classes; all passed on 2026-11-12 (`.\mvnw.cmd test`, 0 failures, 0 errors, 0 skipped).
 - The Python clients under `testData/SevenZone_Demo/` are HTTP-level checks against a running backend and are not part of `mvnw test`.
 - Not yet covered: the unbuilt features (admin storage-session API, thresholds, acknowledgment, prediction) and the frontend.
 
