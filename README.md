@@ -31,6 +31,7 @@ Smart_Cold_Storage_Monitor/
     web/                           Error body, request-ID filter, global exception handler
     monitoring/                    Zone monitoring: inventory assessment, SHT45 decoding, live telemetry
                                    ingestion, 5-second alert worker, accelerated replay
+    simulator/                     Java reading simulator (plain Java entry point, no Spring context)
   src/main/resources/
     application.yaml               Defaults (localhost only, database path, monitoring paths)
     application-monitoring-*.yaml  Profiles: demo (5 zones), seven-zone replay, live (7 zones + ingestion)
@@ -42,7 +43,8 @@ Smart_Cold_Storage_Monitor/
     ColdStorage_Demo/, SHT45_30min/  Five-zone inventory and the original 30-minute sensor recording
   docs/                            Monitoring architecture, live telemetry contract, zoning design
   doc/                             Phase 1 design and course material (git-ignored, local only)
-  data/                            Runtime SQLite databases (git-ignored, created on first run)
+  data/                            Runtime SQLite databases (git-ignored, created on first run) and the
+                                   simulator's scenario file monitoring_timestamped.jsonl (committed)
 ```
 
 ## Setup and Run
@@ -71,6 +73,7 @@ In bash use `./mvnw` and `export APP_TELEMETRY_DEVICE_SECRET=local-seven-zone-de
 | Variable | Purpose | Default |
 |---|---|---|
 | `APP_TELEMETRY_DEVICE_SECRET` | Secret used to derive device ingestion tokens (`monitoring-live` profile) | none, required for ingestion |
+| `APP_DEVICE_SECRET` | Java simulator only: secret used to derive device tokens in `--mode=http` | none, required for http mode |
 | `APP_DATABASE_PATH` | Account and audit SQLite file | `./data/smart-cold-storage.db` |
 | `SERVER_PORT` | HTTP port | `8080` |
 | `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD` | First-run administrator | `admin` / `12345678` |
@@ -91,6 +94,31 @@ When prompted for the backend password, enter the administrator password (`12345
 
 For an accelerated replay of the recorded 30-minute feed (2,527 samples), run `python -B .\testData\SevenZone_Demo\test_recorded_live_replay.py` and enter a speed such as `100` (about 18 seconds).
 
+### Run the Java reading simulator
+
+The simulator replays the seven-zone recording in `data/monitoring_timestamped.jsonl` (a copy of `testData/SevenZone_Demo/monitoring_timestamped.jsonl`, 361 samples per device). Each tick sends one reading per device; after a device's last sample it wraps to the first. Every reading carries the **actual send time** (UTC, milliseconds), not the recorded `measured_at`, so readings from consecutive loops always move forward in time. It is a scenario replay, not live sensing.
+
+```powershell
+# Dry run (default): print the JSON that would be posted, one line per device per tick
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.main-class=com.icu.smart_cold_storage_monitor.simulator.SimulatorMain" "-Dspring-boot.run.arguments=--devices=ESP32-SIM-001 --interval=5"
+
+# Post to an endpoint (the design's POST /api/readings is not built yet)
+$env:APP_DEVICE_SECRET = 'local-simulator-device-key'
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.main-class=com.icu.smart_cold_storage_monitor.simulator.SimulatorMain" "-Dspring-boot.run.arguments=--mode=http --sessions=ESP32-SIM-001=1 --devices=ESP32-SIM-001"
+```
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--mode=dry-run\|http` | Print the JSON, or POST it | `dry-run` |
+| `--data=PATH` | Scenario JSONL | `data/monitoring_timestamped.jsonl` |
+| `--url=URL` | Reading endpoint | `http://127.0.0.1:8080/api/readings` |
+| `--devices=ID,...` | Devices to replay | every device in the file (7) |
+| `--sessions=ID=N,...` | Storage session id per device; required for each device in http mode | none |
+| `--interval=SECONDS` | Seconds between ticks, 1 to 30 | `5` |
+| `--cycles=N` | Passes through the scenario, `0` = forever | `0` |
+
+The request body follows the design's reading contract, `{deviceId, sessionId, timestamp, temperatureC, humidityPct}`, with header `Authorization: Device <token>`, where the token is the hex HMAC-SHA256 of the device id under `APP_DEVICE_SECRET` (at least 16 characters; read only from the environment). Both are provisional until the receiving endpoint is built. A retry after a network error, timeout, or 5xx resends the identical body, timestamp included (up to 3 attempts, then the sample is dropped). 400/409 are logged and the loop continues; 404 stops that device; 401/403 stop the run. Late ticks are skipped rather than sent in a burst. Ctrl+C prints a per-device summary. On startup the file is checked: each line must match its SHT45 frame, and each device's samples must be gap-free at the recorded 5-second step.
+
 To try the account and audit features, open Swagger UI at <http://127.0.0.1:8080/swagger-ui.html>, or use the endpoints below. Sign in with `GET /api/auth/csrf`, then `POST /api/auth/login` (form fields `username`, `password`, header `X-CSRF-TOKEN`).
 
 | Endpoint | Access | Purpose |
@@ -110,7 +138,7 @@ More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERT
 | Functional Requirement (from Phase 1) | Status | Notes |
 |---|---|---|
 | FR-01 User login and logout | Complete | Session login/logout, BCrypt, CSRF, roles (OPERATOR, ADMIN), session expiry on password reset or deactivation, first-run admin. Admins create, reset, and deactivate accounts. |
-| FR-02 Sensor data ingestion | Partial | Device-authenticated `POST /api/telemetry/readings` with per-channel quality states and idempotent retries (200 identical, 409 conflicting, 201 new). It uses a zone/boot/sequence contract in the `monitoring-live` profile, not the design's `POST /api/readings` with storage sessions, which is not built. |
+| FR-02 Sensor data ingestion | Partial | Device-authenticated `POST /api/telemetry/readings` with per-channel quality states and idempotent retries (200 identical, 409 conflicting, 201 new). It uses a zone/boot/sequence contract in the `monitoring-live` profile, not the design's `POST /api/readings` with storage sessions, which is not built. The Java simulator (`simulator` package) loops the recorded seven-zone samples with send-time timestamps in the design's reading format (dry-run or HTTP). |
 | FR-03 Dashboard | Not started | No frontend yet. Polling-ready JSON endpoints exist (assessments, alerts, alert events). |
 | FR-04 Threshold alerts | Partial | Eight zone alert types (temperature/humidity low and high, sensor missing and invalid). One incident per type, evaluated every 5 seconds, closed on recovery. Limits come from the inventory database; configurable, versioned thresholds (`/api/settings/thresholds`) are not built. |
 | FR-05 Risk prediction | Not started | No Weka model, `RiskPredictor`, or rules fallback. The lot-level condition assessment (OK, WARNING, ACTION_REQUIRED, UNKNOWN) is a rule check, not a risk prediction. |
@@ -122,8 +150,8 @@ More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERT
 
 ## Testing So Far
 
-- JUnit 5, Spring Boot Test, and MockMvc. Integration tests use temporary SQLite files (never another engine). Coverage: database configuration (foreign keys, WAL, transactions), login/logout/CSRF/session behavior, role enforcement, account management, audit writing and review filters, paging, first-run admin creation, OpenAPI document, the zone assessment engine, SHT45 decoding and replay, and the monitoring API.
-- 112 tests across 14 test classes; all passed on 2026-11-07 (`.\mvnw.cmd test`, 0 failures, 0 errors, 0 skipped).
+- JUnit 5, Spring Boot Test, and MockMvc. Integration tests use temporary SQLite files (never another engine). Coverage: database configuration (foreign keys, WAL, transactions), login/logout/CSRF/session behavior, role enforcement, account management, audit writing and review filters, paging, first-run admin creation, OpenAPI document, the zone assessment engine, SHT45 decoding and replay, the monitoring API, and the Java simulator (scenario loading and checks, looping and send-time stamps, retries with the identical payload, HTTP sending against a stub server, options).
+- 158 tests across 20 test classes; all passed on 2026-11-12 (`.\mvnw.cmd test`, 0 failures, 0 errors, 0 skipped).
 - The Python clients under `testData/SevenZone_Demo/` are HTTP-level checks against a running backend and are not part of `mvnw test`.
 - Not yet covered: the unbuilt features (storage sessions, thresholds, acknowledgment, prediction) and the frontend.
 
@@ -133,7 +161,7 @@ More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERT
 - Add alert acknowledgment with notes, with its audit event in the same transaction; extend the audit catalog to threshold and storage-session changes.
 - Implement risk prediction: shared feature calculation, a Weka training entry point and evaluation report, the `RiskPredictor` interface, and the rules fallback.
 - Build the React and TypeScript dashboard (2-second polling, trend chart, alerts, stale-data indication) served by Spring Boot; add paged readings and alert history APIs.
-- Add the Java simulator with scenario presets, and measure receipt-to-display latency against the 5-second target.
+- Build the receiving `POST /api/readings` for the Java simulator's reading format, and measure receipt-to-display latency against the 5-second target.
 
 ## Team Contributions
 

@@ -6,7 +6,9 @@ target/
 doc/
 
 ### Local runtime data (SQLite database files) ###
-data/
+# Ignore everything under data/ except the simulator's scenario file.
+data/*
+!data/monitoring_timestamped.jsonl
 
 ### STS ###
 .apt_generated
