@@ -8,8 +8,9 @@ import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Derives each device's token as the lowercase hex HMAC-SHA256 of its device id under one shared
- * secret (the same scheme as the monitoring prototype). Sent as {@code Authorization: Device <token>}.
- * Provisional until the receiving endpoint exists. Never log the secret or a token.
+ * secret (the same scheme as the monitoring prototype). Sent as
+ * {@code Authorization: Device <deviceId>:<token>}, which {@code POST /api/readings} verifies.
+ * Never log the secret or a token.
  */
 final class DeviceCredentials {
     static final int MIN_SECRET_LENGTH = 16;
@@ -35,7 +36,7 @@ final class DeviceCredentials {
     }
 
     String authorizationHeader(String deviceId) {
-        return "Device " + token(deviceId);
+        return "Device " + deviceId + ":" + token(deviceId);
     }
 
     @Override

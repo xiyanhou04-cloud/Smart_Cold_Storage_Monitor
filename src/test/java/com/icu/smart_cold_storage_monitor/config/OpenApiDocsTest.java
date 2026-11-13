@@ -50,6 +50,13 @@ class OpenApiDocsTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/auth/me'].get.security[0].csrf").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/users'].post.security[0].session").exists())
                 .andExpect(jsonPath("$.paths['/api/users'].post.security[0].csrf").exists())
+                // Device ingestion uses only the device credential: no session, no CSRF.
+                .andExpect(jsonPath("$.paths['/api/readings'].post.security[0].device").exists())
+                .andExpect(jsonPath("$.paths['/api/readings'].post.security[0].session").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/readings'].post.security[0].csrf").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/readings'].post.parameters").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/readings'].post.responses['201']").exists())
+                .andExpect(jsonPath("$.components.securitySchemes.device.name").value("Authorization"))
                 // The CsrfToken and principal method arguments are framework-injected, not client parameters.
                 .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/auth/me'].get.parameters").doesNotExist());

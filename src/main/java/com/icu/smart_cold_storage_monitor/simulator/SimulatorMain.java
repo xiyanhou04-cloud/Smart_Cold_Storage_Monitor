@@ -69,7 +69,7 @@ public final class SimulatorMain {
                 options.url(), new DeviceCredentials(options.deviceSecret()), mapper, REQUEST_TIMEOUT)
             : new ConsoleReadingSender(mapper);
         ReplayLoop loop = new ReplayLoop(scenario, options.sessions(), sender, Clock.systemUTC(), RETRY,
-            options.cycles(), out, TimeUnit.NANOSECONDS::sleep,
+            options.cycles(), out::println, out::println, TimeUnit.NANOSECONDS::sleep,
             System::nanoTime);
 
         out.printf("Replaying %d device(s) from %s every %d s, %s, mode %s%s.%n",

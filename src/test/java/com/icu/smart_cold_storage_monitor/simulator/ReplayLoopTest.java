@@ -30,6 +30,7 @@ class ReplayLoopTest {
     final RecordingSender sender = new RecordingSender();
     final ByteArrayOutputStream output = new ByteArrayOutputStream();
     final List<Long> sleeps = new ArrayList<>();
+    final List<String> notices = new ArrayList<>();
     long fakeNanos;
 
     // Two devices with three samples each: temperatures 1,2,3 and 11,12,13.
@@ -40,8 +41,9 @@ class ReplayLoopTest {
     }
 
     ReplayLoop loop(long cycles, Map<String, Long> sessions) {
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
         return new ReplayLoop(scenario, sessions, sender, clock, new RetryPolicy(3, Duration.ofMillis(100)),
-            cycles, new PrintStream(output, true, StandardCharsets.UTF_8),
+            cycles, out::println, line -> { notices.add(line); out.println(line); },
             nanos -> { sleeps.add(nanos); fakeNanos += nanos; }, () -> fakeNanos);
     }
 
@@ -137,6 +139,8 @@ class ReplayLoopTest {
 
         assertThat(loop.summary().getFirst().rejected()).isEqualTo(1);
         assertThat(loop.summary().getFirst().accepted()).isEqualTo(1);
+        // Only the reading that was not accepted goes to the notice log.
+        assertThat(notices).singleElement().asString().contains("cycle 1 [00:00] A", "REJECTED");
     }
 
     @Test

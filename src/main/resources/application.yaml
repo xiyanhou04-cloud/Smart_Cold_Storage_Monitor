@@ -46,6 +46,24 @@ app:
   #     username:
   #     password:
 
+  # Device ingestion (POST /api/readings). Tokens are HMAC-SHA256(device secret, device id).
+  # Set APP_DEVICE_SECRET (at least 16 characters) to let an external simulator post readings;
+  # when it is unset, a random secret is generated for each run and only the built-in simulator can post.
+  # clear-readings-on-startup empties the readings table on every start (devices, sessions and audit
+  # events are kept). Set APP_READINGS_CLEAR_ON_STARTUP=false to keep readings across restarts.
+  ingestion:
+    device-secret: ${APP_DEVICE_SECRET:}
+    clear-readings-on-startup: ${APP_READINGS_CLEAR_ON_STARTUP:true}
+  # Built-in sensor simulator: on startup it registers each device in the scenario file, makes sure
+  # it has an active storage session, and then posts one reading per device every interval, forever,
+  # stamped with the send time. APP_SIMULATOR_ENABLED=false stops only the sending loop: devices
+  # and sessions are still provisioned so an external simulator (same APP_DEVICE_SECRET) can post.
+  simulator:
+    enabled: ${APP_SIMULATOR_ENABLED:true}
+    data: ./data/monitoring_timestamped.jsonl
+    interval: 5s
+    devices: []
+
   monitoring:
     inventory-path: ./testData/ColdStorage_Demo/cold_storage_demo.sqlite
     sensor-path: ./testData/SHT45_30min/monitoring_timestamped.jsonl

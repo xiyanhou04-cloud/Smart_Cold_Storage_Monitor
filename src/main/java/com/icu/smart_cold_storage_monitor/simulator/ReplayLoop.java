@@ -2,13 +2,13 @@ package com.icu.smart_cold_storage_monitor.simulator;
 
 import com.icu.smart_cold_storage_monitor.simulator.ReadingSender.Outcome;
 import com.icu.smart_cold_storage_monitor.simulator.ReadingSender.SendResult;
-import java.io.PrintStream;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -40,18 +40,22 @@ final class ReplayLoop {
     private final Clock clock;
     private final RetryPolicy retry;
     private final long cycles;
-    private final PrintStream out;
+    private final Consumer<String> readingLog;
+    private final Consumer<String> noticeLog;
     private final Sleeper sleeper;
     private final LongSupplier nanoTime;
     private volatile boolean stopRequested;
     private long skippedTicks;
 
     /**
-     * @param sessions storage session id per device; a missing entry sends {@code sessionId: null}
-     * @param cycles   number of passes through each device's samples; 0 repeats forever
+     * @param sessions   storage session id per device; a missing entry sends {@code sessionId: null}
+     * @param cycles     number of passes through each device's samples; 0 repeats forever
+     * @param readingLog receives one line per accepted reading
+     * @param noticeLog  receives lines for readings that were not accepted, skipped ticks, and the summary
      */
     ReplayLoop(Scenario scenario, Map<String, Long> sessions, ReadingSender sender, Clock clock,
-               RetryPolicy retry, long cycles, PrintStream out, Sleeper sleeper, LongSupplier nanoTime) {
+               RetryPolicy retry, long cycles, Consumer<String> readingLog, Consumer<String> noticeLog,
+               Sleeper sleeper, LongSupplier nanoTime) {
         if (cycles < 0) {
             throw new IllegalArgumentException("cycles must be 0 (forever) or positive.");
         }
@@ -63,7 +67,8 @@ final class ReplayLoop {
         this.clock = clock;
         this.retry = retry;
         this.cycles = cycles;
-        this.out = out;
+        this.readingLog = readingLog;
+        this.noticeLog = noticeLog;
         this.sleeper = sleeper;
         this.nanoTime = nanoTime;
     }
@@ -89,7 +94,7 @@ final class ReplayLoop {
                 if (now > next) {
                     long missed = (now - next) / step + 1;
                     skippedTicks += missed;
-                    out.printf(Locale.ROOT, "Running %d tick(s) behind; skipping them.%n", missed);
+                    noticeLog.accept(String.format(Locale.ROOT, "Running %d tick(s) behind; skipping them.", missed));
                     next += missed * step;
                 }
                 sleeper.sleepNanos(next - now);
@@ -165,13 +170,13 @@ final class ReplayLoop {
     }
 
     void printSummary() {
-        out.println("Summary:");
+        noticeLog.accept("Summary:");
         for (DeviceSummary s : summary()) {
-            out.printf(Locale.ROOT, "  %s cycle=%d sent=%d accepted=%d rejected=%d failed=%d (%s)%n",
-                s.deviceId(), s.cycle(), s.sent(), s.accepted(), s.rejected(), s.failed(), s.state());
+            noticeLog.accept(String.format(Locale.ROOT, "  %s cycle=%d sent=%d accepted=%d rejected=%d failed=%d (%s)",
+                s.deviceId(), s.cycle(), s.sent(), s.accepted(), s.rejected(), s.failed(), s.state()));
         }
         if (skippedTicks > 0) {
-            out.printf(Locale.ROOT, "  skipped ticks: %d%n", skippedTicks);
+            noticeLog.accept(String.format(Locale.ROOT, "  skipped ticks: %d", skippedTicks));
         }
     }
 
@@ -185,10 +190,11 @@ final class ReplayLoop {
 
     private void log(DeviceState device, SamplePoint sample, ReadingPayload payload, SendResult result) {
         long elapsed = sample.elapsedSeconds();
-        out.printf(Locale.ROOT, "cycle %d [%02d:%02d] %s %s %s %.2f C %.2f %%RH -> %s%n",
+        String line = String.format(Locale.ROOT, "cycle %d [%02d:%02d] %s %s %s %.2f C %.2f %%RH -> %s",
             device.cycle, elapsed / 60, elapsed % 60, device.id,
             sample.locationCode() == null ? "-" : sample.locationCode(), payload.timestamp(),
             sample.temperatureC(), sample.humidityPct(), describe(result));
+        (result.outcome() == Outcome.ACCEPTED ? readingLog : noticeLog).accept(line);
     }
 
     private static String describe(SendResult result) {

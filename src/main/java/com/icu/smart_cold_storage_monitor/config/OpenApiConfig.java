@@ -39,6 +39,11 @@ public class OpenApiConfig {
 
     static final String SESSION_SCHEME = "session";
     static final String CSRF_SCHEME = "csrf";
+    static final String DEVICE_SCHEME = "device";
+
+    /** Operations authenticated by a device credential instead of a session, and exempt from CSRF. */
+    private static final Set<String> DEVICE_OPERATIONS = Set.of(
+            "POST " + DeviceIngestionSecurityConfig.READINGS_URL);
 
     /** Operations that need no signed-in session ("METHOD path"). */
     private static final Set<String> PUBLIC_OPERATIONS = Set.of(
@@ -75,7 +80,14 @@ public class OpenApiConfig {
                                 .in(SecurityScheme.In.HEADER)
                                 .name("X-CSRF-TOKEN")
                                 .description("Token from GET /api/auth/csrf. Required on every non-GET "
-                                        + "request, including login and logout; fetch it again after login.")));
+                                        + "request, including login and logout; fetch it again after login."))
+                        .addSecuritySchemes(DEVICE_SCHEME, new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY)
+                                .in(SecurityScheme.In.HEADER)
+                                .name("Authorization")
+                                .description("Device credential for POST /api/readings only: "
+                                        + "`Device <deviceId>:<token>`, where the token is the hex HMAC-SHA256 of "
+                                        + "the device id under APP_DEVICE_SECRET. No session cookie or CSRF token.")));
     }
 
     @Bean
@@ -93,6 +105,9 @@ public class OpenApiConfig {
 
     private static SecurityRequirement requirementFor(PathItem.HttpMethod method, String path) {
         SecurityRequirement requirement = new SecurityRequirement();
+        if (DEVICE_OPERATIONS.contains(method + " " + path)) {
+            return requirement.addList(DEVICE_SCHEME);
+        }
         if (!PUBLIC_OPERATIONS.contains(method + " " + path)) {
             requirement.addList(SESSION_SCHEME);
         }

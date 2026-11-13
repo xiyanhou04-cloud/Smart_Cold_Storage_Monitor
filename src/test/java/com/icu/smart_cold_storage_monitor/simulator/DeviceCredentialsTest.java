@@ -18,7 +18,7 @@ class DeviceCredentialsTest {
     @Test
     void buildsDeviceAuthorizationHeader() {
         assertThat(new DeviceCredentials(SECRET).authorizationHeader("ESP32-SIM-001"))
-            .isEqualTo("Device 174a4b7a4d13274bff5f92e1bfd0cec52aedaaa915f45619f18f1841cfd40298");
+            .isEqualTo("Device ESP32-SIM-001:174a4b7a4d13274bff5f92e1bfd0cec52aedaaa915f45619f18f1841cfd40298");
     }
 
     @Test

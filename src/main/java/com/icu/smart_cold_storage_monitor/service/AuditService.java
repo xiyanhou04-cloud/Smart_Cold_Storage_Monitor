@@ -64,6 +64,12 @@ public class AuditService {
                 String.valueOf(targetUserId), details);
     }
 
+    /** Records a storage session start; {@code actorId} is null when the system started it. */
+    public void recordStorageSessionStarted(Long actorId, long sessionId, String details) {
+        record(actorId, null, AuditEventType.STORAGE_SESSION_STARTED, AuditResult.SUCCESS, "STORAGE_SESSION",
+                String.valueOf(sessionId), details);
+    }
+
     private void record(Long actorId, String attemptedUsername, AuditEventType type, AuditResult result,
                         String targetType, String targetId, String details) {
         Instant now = Instant.now(clock);
