@@ -30,13 +30,15 @@ public class DeviceSessionService {
     }
 
     /**
-     * Registers the device if it is new (an existing device keeps its name and enabled flag) and returns its active
-     * storage session, starting one now if there is none. A started session is audited in the same transaction
-     * with no actor, because the system started it.
+     * Registers the device if it is new (an existing device keeps its name, enabled flag, and location; only a
+     * missing location is filled in) and returns its active storage session, starting one now if there is none.
+     * A started session is audited in the same transaction with no actor, because the system started it.
+     * {@code locationCode} may be {@code null} when the zone is unknown.
      */
     @Transactional
-    public StorageSession ensureDeviceWithActiveSession(String deviceId, String deviceName, String productType) {
-        devices.insertIfAbsent(deviceId, deviceName);
+    public StorageSession ensureDeviceWithActiveSession(String deviceId, String deviceName, String locationCode,
+                                                        String productType) {
+        devices.insertIfAbsent(deviceId, deviceName, locationCode);
         return sessions.findActiveByDevice(deviceId).orElseGet(() -> {
             Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
             long id = sessions.insert(deviceId, productType, now);

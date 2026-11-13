@@ -57,8 +57,8 @@ class SensorSimulatorRunnerTest {
 
         assertThat(runner.isRunning()).isTrue();
         assertThat(readingCount()).isGreaterThanOrEqualTo(6);
-        assertThat(jdbc.sql("SELECT id FROM devices ORDER BY id").query(String.class).list())
-                .containsExactly("ESP32-SIM-001", "ESP32-SIM-005");
+        assertThat(jdbc.sql("SELECT id || '@' || location_code FROM devices ORDER BY id").query(String.class).list())
+                .containsExactly("ESP32-SIM-001@RAW-MEAT", "ESP32-SIM-005@FROZEN");
         List<Map<String, Object>> sessions = jdbc.sql(
                 "SELECT device_id, product_type FROM storage_sessions WHERE ended_at IS NULL ORDER BY device_id")
                 .query().listOfRows();

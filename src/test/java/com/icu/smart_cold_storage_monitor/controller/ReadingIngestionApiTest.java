@@ -56,8 +56,10 @@ class ReadingIngestionApiTest extends SqliteIntegrationTest {
 
     @BeforeEach
     void deviceWithSession() {
-        session = deviceSessions.ensureDeviceWithActiveSession(DEVICE, "Raw meat sensor", "RAW-MEAT").id();
-        otherSession = deviceSessions.ensureDeviceWithActiveSession(OTHER_DEVICE, "Veg sensor", "VEG-COLD").id();
+        session = deviceSessions.ensureDeviceWithActiveSession(DEVICE, "Raw meat sensor", "RAW-MEAT", "RAW-MEAT")
+                .id();
+        otherSession = deviceSessions.ensureDeviceWithActiveSession(OTHER_DEVICE, "Veg sensor", "VEG-COLD", "VEG-COLD")
+                .id();
         // Sessions start "now"; readings use later timestamps well inside the 60 s future limit.
         base = Instant.now().plusSeconds(1).truncatedTo(ChronoUnit.MILLIS);
     }

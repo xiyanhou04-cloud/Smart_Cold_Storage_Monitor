@@ -56,9 +56,9 @@ class ReadingQueryApiTest extends SqliteIntegrationTest {
         accounts.createUser("admin1", PASSWORD, Role.ADMIN, null);
         operator = login("operator1");
         // Registered out of id order to check that the response is ordered by device id.
-        long sessionC = deviceSessions.ensureDeviceWithActiveSession(C, "Sensor C", "VEG-COOL").id();
-        long sessionA = deviceSessions.ensureDeviceWithActiveSession(A, "Sensor A", "RAW-MEAT").id();
-        long sessionB = deviceSessions.ensureDeviceWithActiveSession(B, "Sensor B", "VEG-COLD").id();
+        long sessionC = deviceSessions.ensureDeviceWithActiveSession(C, "Sensor C", "VEG-COOL", "VEG-COOL").id();
+        long sessionA = deviceSessions.ensureDeviceWithActiveSession(A, "Sensor A", "RAW-MEAT", "RAW-MEAT").id();
+        long sessionB = deviceSessions.ensureDeviceWithActiveSession(B, "Sensor B", "VEG-COLD", "VEG-COLD").id();
         now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         reading(A, sessionA, ago(10), 3.0, 60.0);   // outside the default 5 minutes
         reading(A, sessionA, ago(4), 4.0, 70.0);

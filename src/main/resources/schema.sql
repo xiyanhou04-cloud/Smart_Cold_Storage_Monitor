@@ -40,10 +40,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_type_time ON audit_events (event_typ
 
 -- id is the device identifier the device sends (e.g. ESP32-SIM-001). The ingestion credential
 -- is mapped to the device through application configuration, not stored here.
+-- location_code is the storage zone the device is installed in (e.g. RAW-MEAT). It belongs to the
+-- registered device, not to each reading, so a device cannot claim another zone. NULL means unknown.
+-- A column added after a table was first released must also be listed in
+-- setup/SchemaUpgradeOnStartup, because CREATE TABLE IF NOT EXISTS leaves an existing table as it is.
 CREATE TABLE IF NOT EXISTS devices (
-    id      TEXT    PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 64),
-    name    TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
-    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
+    id            TEXT    PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 64),
+    name          TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+    enabled       INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    location_code TEXT    CHECK (location_code IS NULL OR length(location_code) BETWEEN 1 AND 64)
 );
 
 -- A storage session defines the storage-duration origin. ended_at IS NULL means active, and

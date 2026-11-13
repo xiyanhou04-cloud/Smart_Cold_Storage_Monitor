@@ -72,7 +72,7 @@ public class SensorSimulatorRunner implements DisposableBean {
         loaded.deviceLocations().forEach((device, location) -> {
             String productType = location == null ? "UNSPECIFIED" : location;
             StorageSession session = deviceSessions.ensureDeviceWithActiveSession(
-                    device, "Simulated " + productType + " sensor", productType);
+                    device, "Simulated " + productType + " sensor", location, productType);
             sessions.put(device, session.id());
         });
         URI endpoint = URI.create("http://" + host() + ":" + port + DeviceIngestionSecurityConfig.READINGS_URL);

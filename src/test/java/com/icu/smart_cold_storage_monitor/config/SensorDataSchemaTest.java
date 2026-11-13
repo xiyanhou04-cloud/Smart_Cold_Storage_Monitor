@@ -138,6 +138,19 @@ class SensorDataSchemaTest extends SqliteIntegrationTest {
     }
 
     @Test
+    void deviceLocationIsOptionalButNotBlankOrTooLong() {
+        assertThat(jdbc.sql("SELECT location_code IS NULL FROM devices WHERE id = 'ESP32-SIM-001'")
+            .query(Boolean.class).single()).isTrue();
+        assertThatCode(() -> jdbc.sql("UPDATE devices SET location_code = 'RAW-MEAT' WHERE id = 'ESP32-SIM-001'")
+            .update()).doesNotThrowAnyException();
+        assertThatThrownBy(() -> jdbc.sql("UPDATE devices SET location_code = '' WHERE id = 'ESP32-SIM-001'").update())
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.sql("UPDATE devices SET location_code = ? WHERE id = 'ESP32-SIM-001'")
+            .param("X".repeat(65)).update())
+            .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void deviceWithReadingsCannotBeDeleted() {
         reading("ESP32-SIM-001", session1, T1, 4.0, 70, null);
 

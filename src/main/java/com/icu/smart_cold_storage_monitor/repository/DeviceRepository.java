@@ -19,7 +19,7 @@ public class DeviceRepository {
     }
 
     public Optional<Device> findById(String id) {
-        return jdbc.sql("SELECT id, name, enabled FROM devices WHERE id = :id")
+        return jdbc.sql("SELECT id, name, enabled, location_code FROM devices WHERE id = :id")
                 .param("id", id)
                 .query(DeviceRepository::mapRow)
                 .optional();
@@ -30,15 +30,23 @@ public class DeviceRepository {
         return jdbc.sql("SELECT id FROM devices ORDER BY id").query(String.class).list();
     }
 
-    /** Inserts the device if it does not exist; an existing row (name, enabled flag) is left unchanged. */
-    public void insertIfAbsent(String id, String name) {
-        jdbc.sql("INSERT INTO devices (id, name, enabled) VALUES (:id, :name, 1) ON CONFLICT (id) DO NOTHING")
+    /**
+     * Inserts the device if it does not exist. An existing row keeps its name, enabled flag, and location; only a
+     * missing (NULL) location is filled in, e.g. for a device registered before {@code location_code} existed.
+     * {@code locationCode} may be {@code null} when unknown.
+     */
+    public void insertIfAbsent(String id, String name, String locationCode) {
+        jdbc.sql("""
+                INSERT INTO devices (id, name, enabled, location_code) VALUES (:id, :name, 1, :location)
+                ON CONFLICT (id) DO UPDATE SET location_code = coalesce(devices.location_code, excluded.location_code)""")
                 .param("id", id)
                 .param("name", name)
+                .param("location", locationCode)
                 .update();
     }
 
     private static Device mapRow(ResultSet rs, int rowNum) throws SQLException {
-        return new Device(rs.getString("id"), rs.getString("name"), rs.getInt("enabled") == 1);
+        return new Device(rs.getString("id"), rs.getString("name"), rs.getInt("enabled") == 1,
+                rs.getString("location_code"));
     }
 }
