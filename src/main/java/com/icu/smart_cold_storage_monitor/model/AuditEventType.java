@@ -1,8 +1,8 @@
 package com.icu.smart_cold_storage_monitor.model;
 
 /**
- * Audit event catalog (design doc §7, NIST AU-2). Further types such as alert acknowledgments and storage-session
- * changes are added with their features.
+ * Audit event catalog (design doc §7, NIST AU-2). Further types such as storage-session changes are added with
+ * their features.
  */
 public enum AuditEventType {
     LOGIN_SUCCESS,
@@ -19,5 +19,7 @@ public enum AuditEventType {
     THRESHOLD_CHANGE_REQUESTED,
     THRESHOLD_CHANGE_APPROVED,
     THRESHOLD_CHANGE_REJECTED,
-    THRESHOLD_CHANGE_CANCELLED
+    THRESHOLD_CHANGE_CANCELLED,
+    /** A user acknowledged an alert (FR-06). A repeated acknowledgment of the same alert writes no further event. */
+    ALERT_ACKNOWLEDGED
 }

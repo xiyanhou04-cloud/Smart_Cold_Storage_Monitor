@@ -23,6 +23,7 @@ public class AuditService {
     static final int MAX_TEXT_LENGTH = 500;
     static final String THRESHOLD_SETTING = "THRESHOLD_SETTING";
     static final String THRESHOLD_CHANGE_REQUEST = "THRESHOLD_CHANGE_REQUEST";
+    static final String ALERT = "ALERT";
 
     private final AuditEventRepository repository;
     private final Clock clock;
@@ -96,6 +97,12 @@ public class AuditService {
     public void recordThresholdChangeCancelled(long actorId, long requestId, String details) {
         record(actorId, null, AuditEventType.THRESHOLD_CHANGE_CANCELLED, AuditResult.SUCCESS,
                 THRESHOLD_CHANGE_REQUEST, String.valueOf(requestId), details);
+    }
+
+    /** Records the first acknowledgment of an alert; {@code details} summarizes the alert, not the note text. */
+    public void recordAlertAcknowledged(long actorId, long alertId, String details) {
+        record(actorId, null, AuditEventType.ALERT_ACKNOWLEDGED, AuditResult.SUCCESS, ALERT, String.valueOf(alertId),
+                details);
     }
 
     private void record(Long actorId, String attemptedUsername, AuditEventType type, AuditResult result,

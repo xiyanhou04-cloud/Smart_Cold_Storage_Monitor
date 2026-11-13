@@ -10,19 +10,26 @@ import com.icu.smart_cold_storage_monitor.model.RiskLevel;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
-/** SQL access for the {@code alerts} table. Alerts are never deleted. */
+/**
+ * SQL access for the {@code alerts} table. Alerts are never deleted. The acknowledging user's username is read with
+ * a correlated subquery rather than a join, so the same column list also works in {@code RETURNING}.
+ */
 @Repository
 public class AlertRepository {
 
     private static final String COLUMNS = """
             id, session_id, device_id, kind, severity, source, opened_at, last_seen_at, resolved_at, resolve_reason,
             metric, direction, opening_threshold_id, limit_value, opening_value, last_value, peak_value,
-            model_or_rule_version, quality_flag, acknowledged_by, acknowledged_at, note""";
+            model_or_rule_version, quality_flag, acknowledged_by, acknowledged_at, note,
+            (SELECT u.username FROM users u WHERE u.id = acknowledged_by) AS acknowledged_by_username""";
 
     private final JdbcClient jdbc;
 
@@ -111,6 +118,78 @@ public class AlertRepository {
                 .single();
     }
 
+    /**
+     * Records the first acknowledgment of an alert. Returns empty when the alert does not exist or was already
+     * acknowledged; the alert's resolution and evidence columns are left as they are.
+     */
+    public Optional<Alert> acknowledge(long id, long userId, Instant acknowledgedAt, String note) {
+        return jdbc.sql("""
+                        UPDATE alerts SET acknowledged_by = :userId, acknowledged_at = :acknowledgedAt, note = :note
+                        WHERE id = :id AND acknowledged_at IS NULL
+                        RETURNING\s""" + COLUMNS)
+                .param("id", id)
+                .param("userId", userId)
+                .param("acknowledgedAt", SqlTimestamps.format(acknowledgedAt))
+                .param("note", note)
+                .query(AlertRepository::mapRow)
+                .optional();
+    }
+
+    /** One page of matching alerts, most recently opened first. */
+    public List<Alert> search(AlertFilter filter, long offset, int limit) {
+        Map<String, Object> params = new HashMap<>();
+        String where = whereClause(filter, params);
+        params.put("limit", limit);
+        params.put("offset", offset);
+        return jdbc.sql("SELECT " + COLUMNS + " FROM alerts\n" + where
+                        + "ORDER BY opened_at DESC, id DESC LIMIT :limit OFFSET :offset")
+                .params(params)
+                .query(AlertRepository::mapRow)
+                .list();
+    }
+
+    public long count(AlertFilter filter) {
+        Map<String, Object> params = new HashMap<>();
+        return jdbc.sql("SELECT COUNT(*) FROM alerts\n" + whereClause(filter, params))
+                .params(params)
+                .query(Long.class)
+                .single();
+    }
+
+    /**
+     * Builds the WHERE clause from fixed SQL fragments only; every filter value is bound as a named parameter.
+     * Returns an empty string, or {@code "WHERE ...\n"}, and fills {@code params}.
+     */
+    private static String whereClause(AlertFilter filter, Map<String, Object> params) {
+        List<String> conditions = new ArrayList<>();
+        if (!filter.deviceIds().isEmpty()) {
+            conditions.add("device_id IN (:deviceIds)");
+            params.put("deviceIds", filter.deviceIds().stream().sorted().toList());
+        }
+        if (!filter.kinds().isEmpty()) {
+            conditions.add("kind IN (:kinds)");
+            params.put("kinds", filter.kinds().stream().map(Enum::name).sorted().toList());
+        }
+        if (filter.state() != null) {
+            conditions.add(switch (filter.state()) {
+                case ACTIVE -> "resolved_at IS NULL";
+                case RESOLVED -> "resolved_at IS NOT NULL";
+            });
+        }
+        if (filter.acknowledged() != null) {
+            conditions.add(filter.acknowledged() ? "acknowledged_at IS NOT NULL" : "acknowledged_at IS NULL");
+        }
+        if (filter.from() != null) {
+            conditions.add("opened_at >= :from");
+            params.put("from", SqlTimestamps.format(filter.from()));
+        }
+        if (filter.to() != null) {
+            conditions.add("opened_at < :to");
+            params.put("to", SqlTimestamps.format(filter.to()));
+        }
+        return conditions.isEmpty() ? "" : "WHERE " + String.join(" AND ", conditions) + "\n";
+    }
+
     private static Alert mapRow(ResultSet rs, int rowNum) throws SQLException {
         String metric = rs.getString("metric");
         String direction = rs.getString("direction");
@@ -126,7 +205,8 @@ public class AlertRepository {
                 nullableDouble(rs, "opening_value"), nullableDouble(rs, "last_value"),
                 nullableDouble(rs, "peak_value"),
                 rs.getString("model_or_rule_version"), rs.getString("quality_flag"),
-                nullableLong(rs, "acknowledged_by"), instant(rs, "acknowledged_at"), rs.getString("note"));
+                nullableLong(rs, "acknowledged_by"), rs.getString("acknowledged_by_username"),
+                instant(rs, "acknowledged_at"), rs.getString("note"));
     }
 
     private static Instant instant(ResultSet rs, String column) throws SQLException {
