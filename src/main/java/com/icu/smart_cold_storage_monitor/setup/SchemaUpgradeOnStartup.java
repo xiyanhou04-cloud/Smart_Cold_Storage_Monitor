@@ -35,7 +35,9 @@ public class SchemaUpgradeOnStartup implements InitializingBean {
             new AddColumn("threshold_settings", "upper_humidity_pct",
                     "REAL CHECK ((upper_humidity_pct IS NULL) = (lower_humidity_pct IS NULL) AND "
                             + "(upper_humidity_pct IS NULL OR (upper_humidity_pct BETWEEN 0 AND 100 "
-                            + "AND lower_humidity_pct < upper_humidity_pct)))"));
+                            + "AND lower_humidity_pct < upper_humidity_pct)))"),
+            new AddColumn("alerts", "description",
+                    "TEXT CHECK (description IS NULL OR length(description) BETWEEN 1 AND 1000)"));
 
     private static final Logger log = LoggerFactory.getLogger(SchemaUpgradeOnStartup.class);
 

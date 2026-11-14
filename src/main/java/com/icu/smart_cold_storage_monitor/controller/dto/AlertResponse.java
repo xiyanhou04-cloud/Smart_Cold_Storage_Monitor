@@ -15,7 +15,8 @@ import java.time.Instant;
 /**
  * One alert in the format shared by threshold and risk alerts. Exactly one of {@code threshold} (kind THRESHOLD)
  * and {@code risk} (kind RISK) is present; {@code resolvedAt}, {@code resolveReason} and {@code acknowledgment} are
- * {@code null} until the alert is resolved or acknowledged.
+ * {@code null} until the alert is resolved or acknowledged. {@code description} is the system's text from when the
+ * alert opened ({@code null} if none); {@code acknowledgment.note} is the user's.
  */
 public record AlertResponse(
         long id,
@@ -24,6 +25,10 @@ public record AlertResponse(
         AlertKind kind,
         RiskLevel severity,
         AlertSource source,
+        @Schema(description = "Written by the system when the alert opened (any kind), or null; the acknowledging "
+                + "user's text is acknowledgment.note",
+                example = "Temperature 4.6 °C is above the upper limit of 4.0 °C.")
+        String description,
         AlertState state,
         @Schema(description = "Measured time of the reading that opened the alert") Instant openedAt,
         @Schema(description = "Measured time of the latest reading that confirmed it") Instant lastSeenAt,
@@ -64,7 +69,7 @@ public record AlertResponse(
                         alert.note())
                 : null;
         return new AlertResponse(alert.id(), alert.deviceId(), alert.sessionId(), alert.kind(), alert.severity(),
-                alert.source(), alert.state(), alert.openedAt(), alert.lastSeenAt(), alert.resolvedAt(),
+                alert.source(), alert.description(), alert.state(), alert.openedAt(), alert.lastSeenAt(), alert.resolvedAt(),
                 alert.resolveReason(), threshold, risk, acknowledgment);
     }
 

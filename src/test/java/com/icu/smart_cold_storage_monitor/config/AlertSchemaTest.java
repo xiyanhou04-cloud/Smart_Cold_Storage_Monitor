@@ -118,6 +118,23 @@ class AlertSchemaTest extends SqliteIntegrationTest {
     }
 
     @Test
+    void anyKindMayCarryADescriptionOfUpTo1000Characters() {
+        long threshold = thresholdAlert(session, DEVICE, this.threshold, "TEMPERATURE");
+        long risk = riskAlert(session, DEVICE);
+        String update = "UPDATE alerts SET description = ? WHERE id = ?";
+
+        assertThatCode(() -> jdbc.sql(update).params("Temperature 5 °C is above 4 °C.", threshold).update())
+                .doesNotThrowAnyException();
+        assertThatCode(() -> jdbc.sql(update).params("x".repeat(1000), risk).update()).doesNotThrowAnyException();
+        assertThatThrownBy(() -> jdbc.sql(update).params("x".repeat(1001), risk).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.sql(update).params("", risk).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE description IS NOT NULL").query(Long.class).single())
+                .isEqualTo(2);
+    }
+
+    @Test
     void severityIsMediumOrHigh() {
         assertThatThrownBy(() -> jdbc.sql("""
                 INSERT INTO alerts (session_id, device_id, kind, severity, source, opened_at, last_seen_at,

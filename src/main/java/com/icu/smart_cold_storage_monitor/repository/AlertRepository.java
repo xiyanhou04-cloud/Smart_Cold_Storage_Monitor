@@ -26,7 +26,8 @@ import org.springframework.stereotype.Repository;
 public class AlertRepository {
 
     private static final String COLUMNS = """
-            id, session_id, device_id, kind, severity, source, opened_at, last_seen_at, resolved_at, resolve_reason,
+            id, session_id, device_id, kind, severity, source, description, opened_at, last_seen_at, resolved_at,
+            resolve_reason,
             metric, direction, opening_threshold_id, limit_value, opening_value, last_value, peak_value,
             model_or_rule_version, quality_flag, acknowledged_by, acknowledged_at, note,
             (SELECT u.username FROM users u WHERE u.id = acknowledged_by) AS acknowledged_by_username""";
@@ -64,23 +65,28 @@ public class AlertRepository {
                 .list();
     }
 
-    /** Values of a new threshold alert; its opening value is also its last and peak value. */
+    /**
+     * Values of a new threshold alert; its opening value is also its last and peak value.
+     *
+     * @param description the system's explanation, 1 to 1000 characters, or {@code null}
+     */
     public record NewThresholdAlert(long sessionId, String deviceId, RiskLevel severity, ReadingMetric metric,
                                     AlertDirection direction, long thresholdId, double limitValue, double value,
-                                    Instant measuredAt) {
+                                    Instant measuredAt, String description) {
     }
 
     public Alert insertThresholdAlert(NewThresholdAlert alert) {
         return jdbc.sql("""
-                        INSERT INTO alerts (session_id, device_id, kind, severity, source, opened_at, last_seen_at,
-                                            metric, direction, opening_threshold_id, limit_value, opening_value,
-                                            last_value, peak_value)
-                        VALUES (:sessionId, :deviceId, 'THRESHOLD', :severity, 'THRESHOLD', :measuredAt, :measuredAt,
-                                :metric, :direction, :thresholdId, :limitValue, :value, :value, :value)
+                        INSERT INTO alerts (session_id, device_id, kind, severity, source, description, opened_at,
+                                            last_seen_at, metric, direction, opening_threshold_id, limit_value,
+                                            opening_value, last_value, peak_value)
+                        VALUES (:sessionId, :deviceId, 'THRESHOLD', :severity, 'THRESHOLD', :description, :measuredAt,
+                                :measuredAt, :metric, :direction, :thresholdId, :limitValue, :value, :value, :value)
                         RETURNING\s""" + COLUMNS)
                 .param("sessionId", alert.sessionId())
                 .param("deviceId", alert.deviceId())
                 .param("severity", alert.severity().name())
+                .param("description", alert.description())
                 .param("measuredAt", SqlTimestamps.format(alert.measuredAt()))
                 .param("metric", alert.metric().name())
                 .param("direction", alert.direction().name())
@@ -196,7 +202,7 @@ public class AlertRepository {
         String resolveReason = rs.getString("resolve_reason");
         return new Alert(rs.getLong("id"), rs.getLong("session_id"), rs.getString("device_id"),
                 AlertKind.valueOf(rs.getString("kind")), RiskLevel.valueOf(rs.getString("severity")),
-                AlertSource.valueOf(rs.getString("source")),
+                AlertSource.valueOf(rs.getString("source")), rs.getString("description"),
                 instant(rs, "opened_at"), instant(rs, "last_seen_at"), instant(rs, "resolved_at"),
                 resolveReason == null ? null : AlertResolveReason.valueOf(resolveReason),
                 metric == null ? null : ReadingMetric.valueOf(metric),

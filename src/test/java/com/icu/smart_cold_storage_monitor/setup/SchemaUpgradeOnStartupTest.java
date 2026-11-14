@@ -92,6 +92,31 @@ class SchemaUpgradeOnStartupTest {
     }
 
     @Test
+    void addsTheDescriptionColumnToAnOldAlertsTableAndKeepsItsRows() {
+        // alerts as created by the build before description existed (only the columns schema.sql's indexes use,
+        // plus the acknowledgment note).
+        jdbc.sql("""
+                CREATE TABLE alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+                    device_id TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT NOT NULL, source TEXT NOT NULL,
+                    opened_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, resolved_at TEXT, metric TEXT, note TEXT)""")
+                .update();
+        jdbc.sql("""
+                INSERT INTO alerts (session_id, device_id, kind, severity, source, opened_at, last_seen_at, metric,
+                                    note)
+                VALUES (1, 'D1', 'THRESHOLD', 'HIGH', 'THRESHOLD', '2026-11-13T08:00:00.000Z',
+                        '2026-11-13T08:00:00.000Z', 'TEMPERATURE', 'Checked')""").update();
+        new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(dataSource);
+
+        assertThat(upgrader.upgrade()).isEqualTo(1);
+
+        assertThat(jdbc.sql("SELECT note, description IS NULL AS none FROM alerts").query().listOfRows())
+                .containsExactly(Map.of("note", "Checked", "none", 1));
+        assertThatThrownBy(() -> jdbc.sql("UPDATE alerts SET description = ''").update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(upgrader.upgrade()).isZero();
+    }
+
+    @Test
     void aDatabaseCreatedFromTheCurrentSchemaNeedsNoUpgrade() {
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(dataSource);
 

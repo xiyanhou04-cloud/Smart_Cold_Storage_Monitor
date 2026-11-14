@@ -80,6 +80,8 @@ class ThresholdAlertServiceTest extends SqliteIntegrationTest {
         assertThat(alert.kind()).isEqualTo(AlertKind.THRESHOLD);
         assertThat(alert.severity()).isEqualTo(RiskLevel.HIGH);
         assertThat(alert.source()).isEqualTo(AlertSource.THRESHOLD);
+        assertThat(alert.description()).isEqualTo("Temperature 4.5 °C is above the upper limit of 4.0 °C.");
+        assertThat(alert.note()).isNull();
         assertThat(alert.deviceId()).isEqualTo(DEVICE);
         assertThat(alert.metric()).isEqualTo(ReadingMetric.TEMPERATURE);
         assertThat(alert.direction()).isEqualTo(AlertDirection.ABOVE);
@@ -107,6 +109,8 @@ class ThresholdAlertServiceTest extends SqliteIntegrationTest {
         assertThat(alert.peakValue()).isEqualTo(6.0);
         assertThat(alert.lastSeenAt()).isEqualTo(last.measuredAt());
         assertThat(alert.active()).isTrue();
+        // The description stays the one written when the alert opened.
+        assertThat(alert.description()).isEqualTo("Temperature 4.5 °C is above the upper limit of 4.0 °C.");
     }
 
     @Test
@@ -120,6 +124,7 @@ class ThresholdAlertServiceTest extends SqliteIntegrationTest {
         assertThat(alert.limitValue()).isEqualTo(0.0);
         assertThat(alert.peakValue()).isEqualTo(-2.0);
         assertThat(alert.lastValue()).isEqualTo(-1.0);
+        assertThat(alert.description()).isEqualTo("Temperature -0.5 °C is below the lower limit of 0.0 °C.");
     }
 
     @Test
@@ -165,6 +170,7 @@ class ThresholdAlertServiceTest extends SqliteIntegrationTest {
         assertThat(temperature.active()).isTrue();
         assertThat(humidity.severity()).isEqualTo(RiskLevel.HIGH);
         assertThat(humidity.limitValue()).isEqualTo(80.0);
+        assertThat(humidity.description()).isEqualTo("Humidity 85.0 %RH is above the upper limit of 80.0 %RH.");
         assertThat(humidity.resolveReason()).isEqualTo(AlertResolveReason.RECOVERED);
     }
 

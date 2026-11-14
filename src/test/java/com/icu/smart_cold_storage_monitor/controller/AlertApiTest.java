@@ -125,6 +125,7 @@ class AlertApiTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.kind").value("THRESHOLD"))
                 .andExpect(jsonPath("$.severity").value("HIGH"))
                 .andExpect(jsonPath("$.source").value("THRESHOLD"))
+                .andExpect(jsonPath("$.description").value("Temperature 5.0 °C is above the upper limit of 4.0 °C."))
                 .andExpect(jsonPath("$.state").value("ACTIVE"))
                 .andExpect(jsonPath("$.openedAt").isString())
                 .andExpect(jsonPath("$.lastSeenAt").isString())
@@ -176,8 +177,10 @@ class AlertApiTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.alert.acknowledgment.at").isString())
                 .andExpect(jsonPath("$.alert.acknowledgment.note").value("Closed the door."));
 
+        // The user's note sits beside the system's description; neither replaces the other.
         mvc.perform(get("/api/alerts/{id}", meatTemperature).session(admin))
-                .andExpect(jsonPath("$.acknowledgment.username").value("operator1"));
+                .andExpect(jsonPath("$.acknowledgment.username").value("operator1"))
+                .andExpect(jsonPath("$.description").value("Temperature 5.0 °C is above the upper limit of 4.0 °C."));
     }
 
     @Test

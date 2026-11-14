@@ -168,6 +168,10 @@ CREATE INDEX IF NOT EXISTS idx_readings_session_time ON readings (session_id, me
 -- readings that opened and last confirmed the episode; resolved_at is the measured time of the reading
 -- that ended it. resolve_reason: RECOVERED (back in range / risk LOW), SUPERSEDED (replaced by a new
 -- alert of the same kind, e.g. a jump from below to above), SESSION_ENDED.
+-- Two kinds of text: description is written by the code that raises the alert, once, when it opens
+-- (threshold: what was crossed; risk: the model's or rules' explanation), for both kinds and never by
+-- a user; note is the acknowledging user's note (FR-06). description was added after the table was
+-- first released, so it is the last column and also listed in setup/SchemaUpgradeOnStartup.
 -- Deliberately no foreign key to readings or predictions: those rows are cleared on startup by default
 -- (ReadingRetentionService), while alerts and their acknowledgment audit trail must stay. The values
 -- the alert needs are copied in. The composite foreign keys keep the session on the device and the
@@ -203,6 +207,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     acknowledged_at       TEXT
         CHECK (acknowledged_at IS NULL OR acknowledged_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'),
     note                  TEXT    CHECK (note IS NULL OR length(note) <= 500),
+    description           TEXT    CHECK (description IS NULL OR length(description) BETWEEN 1 AND 1000),
 
     FOREIGN KEY (session_id, device_id) REFERENCES storage_sessions (id, device_id),
     FOREIGN KEY (opening_threshold_id, session_id) REFERENCES threshold_settings (id, session_id),

@@ -27,7 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
  * readings in the same direction update it ({@code last_seen_at}, last and peak value); the next in-range reading
  * resolves it ({@code RECOVERED}); a jump straight across the range (below the lower to above the upper limit, or
  * back) resolves it as {@code SUPERSEDED} and opens a new alert for the new direction. Every threshold alert has
- * severity {@link #SEVERITY}: an out-of-range value counts as high risk.
+ * severity {@link #SEVERITY}: an out-of-range value counts as high risk. A new alert gets a {@link #describe
+ * description} of what its opening reading crossed.
  */
 @Service
 public class ThresholdAlertService {
@@ -85,9 +86,21 @@ public class ThresholdAlertService {
         if (direction != null) {
             double limit = direction == AlertDirection.ABOVE ? upper : lower;
             Alert opened = alerts.insertThresholdAlert(new NewThresholdAlert(reading.sessionId(), reading.deviceId(),
-                    SEVERITY, metric, direction, threshold.id(), limit, value, reading.measuredAt()));
+                    SEVERITY, metric, direction, threshold.id(), limit, value, reading.measuredAt(),
+                    describe(metric, direction, value, limit)));
             log.info("Alert {} opened: {} {} limit {} ({}) on device {}", opened.id(), metric, direction, limit, value,
                     reading.deviceId());
         }
+    }
+
+    /**
+     * The alert's description: what the opening reading crossed, e.g.
+     * {@code Temperature 4.6 °C is above the upper limit of 4.0 °C.} Later readings update the values, not this text.
+     */
+    static String describe(ReadingMetric metric, AlertDirection direction, double value, double limit) {
+        String unit = metric == ReadingMetric.TEMPERATURE ? " °C" : " %RH";
+        String name = metric == ReadingMetric.TEMPERATURE ? "Temperature" : "Humidity";
+        String bound = direction == AlertDirection.ABOVE ? "above the upper" : "below the lower";
+        return name + " " + value + unit + " is " + bound + " limit of " + limit + unit + ".";
     }
 }
