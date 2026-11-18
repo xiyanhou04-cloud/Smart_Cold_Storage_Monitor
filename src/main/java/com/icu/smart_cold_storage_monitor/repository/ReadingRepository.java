@@ -87,7 +87,7 @@ public class ReadingRepository {
         return jdbc.sql("DELETE FROM readings").update();
     }
 
-    private static Reading mapRow(ResultSet rs, int rowNum) throws SQLException {
+    static Reading mapRow(ResultSet rs, int rowNum) throws SQLException {
         long thresholdId = rs.getLong("threshold_id");
         Long threshold = rs.wasNull() ? null : thresholdId;
         return new Reading(rs.getLong("id"), rs.getString("device_id"), rs.getLong("session_id"),

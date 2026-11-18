@@ -6,7 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Limits how much reading history is kept. Devices, storage sessions, threshold versions, and audit events are never
- * touched. When tables that reference {@code readings} are added (predictions), delete their rows here first.
+ * touched. Predictions are deleted through the reading foreign key.
  */
 @Service
 public class ReadingRetentionService {

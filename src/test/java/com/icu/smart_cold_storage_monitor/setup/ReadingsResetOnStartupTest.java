@@ -22,7 +22,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * while devices, sessions, and audit events stay. Does not extend {@code SqliteIntegrationTest}, whose per-test
  * cleanup would hide what startup did.
  */
-@SpringBootTest(properties = "app.simulator.enabled=false")
+@SpringBootTest(properties = {"app.simulator.enabled=false", "app.ingestion.clear-readings-on-startup=true"})
 class ReadingsResetOnStartupTest {
 
     @DynamicPropertySource

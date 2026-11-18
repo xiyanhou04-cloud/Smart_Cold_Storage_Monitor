@@ -3,7 +3,6 @@
 -- Applied on every startup by Spring's SQL initializer. Every statement must be idempotent
 -- (CREATE ... IF NOT EXISTS): normal startup must never drop or reset data.
 -- Timestamps are UTC ISO 8601 text (e.g. 2026-11-04T18:30:00.123Z).
--- Remaining design tables (predictions) are added here as their features are implemented.
 
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +151,17 @@ CREATE TABLE IF NOT EXISTS readings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_readings_session_time ON readings (session_id, measured_at);
+
+CREATE TABLE IF NOT EXISTS predictions (
+    id                    INTEGER PRIMARY KEY,
+    reading_id            INTEGER NOT NULL UNIQUE REFERENCES readings (id) ON DELETE CASCADE,
+    risk_level            TEXT NOT NULL CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH')),
+    source                TEXT NOT NULL CHECK (source IN ('MODEL', 'RULES')),
+    model_or_rule_version TEXT NOT NULL,
+    predicted_at          TEXT NOT NULL,
+    feature_snapshot      TEXT NOT NULL,
+    quality_flag          TEXT NOT NULL
+);
 
 -- ---------------------------------------------------------------------------------------------
 -- Alerts (FR-04 threshold excursions and, later, FR-05 risk warnings) share one table, one severity

@@ -1,6 +1,8 @@
 package com.icu.smart_cold_storage_monitor.controller;
 
 import com.icu.smart_cold_storage_monitor.controller.dto.DeviceReadingsResponse;
+import com.icu.smart_cold_storage_monitor.controller.dto.ReadingResponse;
+import com.icu.smart_cold_storage_monitor.repository.PredictionRepository;
 import com.icu.smart_cold_storage_monitor.service.ReadingQueryService;
 import com.icu.smart_cold_storage_monitor.service.exception.InvalidInputException;
 import com.icu.smart_cold_storage_monitor.web.ApiError;
@@ -11,10 +13,12 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Duration;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -31,9 +35,37 @@ public class ReadingQueryController {
     public static final String QUERY_URL = "/api/readings/query";
 
     private final ReadingQueryService readings;
+    private final PredictionRepository predictions;
+    private final Clock clock;
+    private final Duration staleAfter;
 
-    public ReadingQueryController(ReadingQueryService readings) {
+    public ReadingQueryController(ReadingQueryService readings, PredictionRepository predictions, Clock clock,
+                                  @Value("${app.risk.stale-after:PT30S}") Duration staleAfter) {
         this.readings = readings;
+        this.predictions = predictions;
+        this.clock = clock;
+        this.staleAfter = staleAfter;
+    }
+
+    public record RiskSummary(String riskLevel, String source, String modelOrRuleVersion,
+                              Instant predictedAt, String qualityFlag) {}
+
+    public record LatestReading(ReadingResponse reading, boolean stale, RiskSummary prediction) {}
+
+    @GetMapping("/api/readings/latest")
+    @Operation(summary = "Get the latest reading per device",
+            description = "Returns readings keyed by device id. Prediction is null while the latest reading "
+                    + "is pending. Older predictions are never presented as the latest reading's risk.")
+    public Map<String, LatestReading> latest(@RequestParam(required = false) String deviceId) {
+        var body = new LinkedHashMap<String, LatestReading>();
+        Instant staleBefore = clock.instant().minus(staleAfter);
+        for (var row : predictions.latest(deviceId)) {
+            RiskSummary risk = row.riskLevel() == null ? null : new RiskSummary(row.riskLevel().name(),
+                    row.source().name(), row.modelOrRuleVersion(), row.predictedAt(), row.qualityFlag().name());
+            body.put(row.reading().deviceId(), new LatestReading(ReadingResponse.from(row.reading()),
+                    row.reading().measuredAt().isBefore(staleBefore), risk));
+        }
+        return body;
     }
 
     @GetMapping(QUERY_URL)

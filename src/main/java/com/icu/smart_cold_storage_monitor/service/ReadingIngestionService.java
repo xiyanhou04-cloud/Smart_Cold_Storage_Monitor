@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,15 +44,17 @@ public class ReadingIngestionService {
     private final ThresholdSettingRepository thresholds;
     private final ThresholdAlertService thresholdAlerts;
     private final Clock clock;
+    private final ApplicationEventPublisher events;
 
     public ReadingIngestionService(ReadingRepository readings, StorageSessionRepository sessions,
                                    ThresholdSettingRepository thresholds, ThresholdAlertService thresholdAlerts,
-                                   Clock clock) {
+                                   Clock clock, ApplicationEventPublisher events) {
         this.readings = readings;
         this.sessions = sessions;
         this.thresholds = thresholds;
         this.thresholdAlerts = thresholdAlerts;
         this.clock = clock;
+        this.events = events;
     }
 
     /** A validated request body: values are finite and within the plausible sensor range. */
@@ -62,6 +65,8 @@ public class ReadingIngestionService {
     /** @param created false when the submission was an identical retry of a stored reading */
     public record IngestionResult(Reading reading, boolean created) {
     }
+
+    public record ReadingAccepted(Reading reading) {}
 
     @Transactional
     public IngestionResult ingest(String authenticatedDeviceId, ReadingSubmission submission) {
@@ -107,6 +112,7 @@ public class ReadingIngestionService {
                 submission.temperatureC(), submission.humidityPct(),
                 threshold.map(ThresholdSetting::id).orElse(null));
         threshold.ifPresent(t -> thresholdAlerts.evaluate(stored, t));
+        events.publishEvent(new ReadingAccepted(stored));
         return new IngestionResult(stored, true);
     }
 

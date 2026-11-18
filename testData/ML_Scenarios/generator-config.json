@@ -1,0 +1,8 @@
+{
+  "generatorVersion": "cold-storage-scenarios-v1",
+  "randomSeed": 5010,
+  "firstSessionStart": "2026-12-01T00:00:00Z",
+  "cadenceSeconds": 5,
+  "mediumAfterSeconds": 120,
+  "highAfterSeconds": 600
+}
