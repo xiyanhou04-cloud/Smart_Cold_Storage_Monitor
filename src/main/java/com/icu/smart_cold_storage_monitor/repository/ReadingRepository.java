@@ -76,8 +76,8 @@ public class ReadingRepository {
                         ORDER BY device_id, measured_at
                         """)
                 .param("deviceIds", List.copyOf(deviceIds))
-                .param("from", SqlTimestamps.format(from))
-                .param("to", SqlTimestamps.format(to))
+                .param("from", SqlTimestamps.formatRangeBound(from))
+                .param("to", SqlTimestamps.formatRangeBound(to))
                 .query(ReadingRepository::mapRow)
                 .list();
     }

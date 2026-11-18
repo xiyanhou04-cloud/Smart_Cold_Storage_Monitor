@@ -305,18 +305,52 @@ Invoke-RestMethod "$base/api/readings/latest?deviceId=ESP32-SIM-001" -WebSession
 
 Each result has `reading`, `stale` and `prediction`. A pending prediction
 appears as null. A completed prediction provides `riskLevel`, `source`,
-`modelOrRuleVersion`, `predictedAt`, and `qualityFlag`. Restart with the
-same database to retain predictions and recover pending readings. A gap
-longer than 30 seconds (including a long unobserved session prefix) keeps
-subsequent history incomplete for the session. The feature accumulator never
-adds exposure before the first reading.
+`modelOrRuleVersion`, `predictedAt`, and `qualityFlag`. It also reports
+`currentGapReason`, `historicalExposureIncomplete`, and `lastGapReason`.
+Use `stale` to display the age of the latest measurement. Use the prediction
+quality and current gap reason to explain the latest result. The historical
+flag stays true after recovery because the total observed exposure remains a
+lower bound. Older predictions may have a null current gap reason.
+
+Restart with the same database to retain predictions and recover pending
+readings. The SQLite initializer adds `risk_monitoring_runs` to existing
+databases for monitoring start and orderly shutdown markers. Readings and
+predictions already stored keep their original values. The first reading after
+a confirmed orderly interruption uses rules with `MONITORING_INTERRUPTED`.
+A restart without sufficient shutdown evidence uses
+`MONITORING_INTERRUPTION_UNKNOWN`. A gap over 30 seconds during the same run
+uses `INCOMPLETE_HISTORY`. The next valid observed interval can use the model
+again. Unknown intervals contribute no observed exposure, and elapsed storage
+time still runs from the original session start. A monitoring quality flag is
+part of the prediction and does not open a temperature threshold alert.
+
+Pending prediction work is recorded in `prediction_jobs` in the same
+transaction as each reading. The worker processes bounded batches on startup
+and while running. Temporary failures retry with delays from one to thirty
+seconds. A job whose reading history is invalid is marked terminal and kept
+with its failure code for inspection. A committed prediction removes its job.
+For local diagnostics, query `prediction_jobs` to see retry counts, the next
+attempt timestamp in epoch milliseconds, and terminal outcomes.
 
 To demonstrate missing-artifact fallback independently, stop the first
 demo server and start the application with a different, fresh database
 path and `APP_RISK_MODEL_BASE=classpath:/risk-model/absent`. The new
 readings report `RULES` and `MODEL_MISSING` while threshold alerts
 continue. Remove `APP_RISK_MODEL_BASE` before returning to the default demo.
-Configure external artifacts only from trusted project output. Review
+The runtime accepts the approved model bytes from a `classpath:` or `file:`
+resource base and checks their SHA-256 before deserialization. An external
+copy must match the bundled model, metadata, and header. Review and update the
+approved version and digest when releasing a replacement model.
+
+When running the JAR from a directory outside the repository, supply the
+simulator fixture path explicitly. For example, in PowerShell:
+
+```powershell
+java -jar 'C:/path with spaces/Smart_Cold_Storage_Monitor.jar' '--app.simulator.data=C:/path with spaces/monitoring_timestamped.jsonl'
+```
+
+If the fixture is absent, the backend starts and logs that the simulator
+could not load the scenario. Review
 [ML training and evaluation](docs/ML_TRAINING_REPORT.md) for the simulated
 policy and its limitations.
 

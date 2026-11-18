@@ -77,7 +77,37 @@ class RiskBackendIntegrationTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$['risk-device'].prediction.riskLevel").value("MEDIUM"))
                 .andExpect(jsonPath("$['risk-device'].prediction.source").value("RULES"))
                 .andExpect(jsonPath("$['risk-device'].prediction.predictedAt").isString())
-                .andExpect(jsonPath("$['risk-device'].prediction.qualityFlag").value("INCOMPLETE_HISTORY"));
+                .andExpect(jsonPath("$['risk-device'].prediction.qualityFlag").value("INCOMPLETE_HISTORY"))
+                .andExpect(jsonPath("$['risk-device'].prediction.historicalExposureIncomplete").value(true))
+                .andExpect(jsonPath("$['risk-device'].prediction.currentGapReason").value("RUNNING_DATA_GAP"));
+        long recovered = ingest(session.id(), base.plusSeconds(41), 5);
+        awaitPrediction(recovered);
+        mvc.perform(get("/api/readings/latest").param("deviceId", "risk-device").with(user("operator").roles("OPERATOR")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$['risk-device'].prediction.source").value("MODEL"))
+                .andExpect(jsonPath("$['risk-device'].prediction.qualityFlag").value("OK"))
+                .andExpect(jsonPath("$['risk-device'].prediction.historicalExposureIncomplete").value(true))
+                .andExpect(jsonPath("$['risk-device'].prediction.currentGapReason").value("NONE"))
+                .andExpect(jsonPath("$['risk-device'].prediction.lastGapReason").value("RUNNING_DATA_GAP"));
+
+        String wideSnapshot = snapshot(recovered);
+        mvc.perform(put("/api/settings/thresholds/risk-device").session(admin).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("""
+                        {"temperatureLowerC":0,"temperatureUpperC":4,"humidityLowerPct":55,"humidityUpperPct":80}
+                        """)).andExpect(status().isOk());
+        long narrow = thresholds.findCurrentIdBySession(session.id()).orElseThrow();
+        long underNewLimits = ingest(session.id(), base.plusSeconds(46), 5);
+        awaitPrediction(underNewLimits);
+        var underNew = mapper.readTree(snapshot(underNewLimits));
+        assertThat(underNew.path("thresholdId").asLong()).isEqualTo(narrow).isNotEqualTo(version);
+        assertThat(underNew.path("features").path("observedAboveUpperSeconds").asDouble()).isEqualTo(5);
+        long next = ingest(session.id(), base.plusSeconds(51), 5);
+        awaitPrediction(next);
+        assertThat(mapper.readTree(snapshot(next)).path("features").path("observedAboveUpperSeconds").asDouble()).isEqualTo(10);
+        assertThat(snapshot(recovered)).isEqualTo(wideSnapshot);
+        assertThat(snapshot(first)).isEqualTo(original);
+        var produce = devices.ensureDeviceWithActiveSession("produce", "test sensor", "VEG-COLD", "VEG-COLD");
+        assertThat(thresholds.findCurrentBySession(produce.id()).orElseThrow().limits().temperatureUpperC())
+                .isLessThan(4);
     }
 
     @Test
@@ -101,6 +131,29 @@ class RiskBackendIntegrationTest extends SqliteIntegrationTest {
         } finally {
             jdbc.sql("DROP TRIGGER fail_prediction").update();
         }
+    }
+
+    @Test
+    void recoversPredictionOnlineAfterInsertBecomesAvailable() throws Exception {
+        var session = devices.ensureDeviceWithActiveSession("risk-device", "test sensor", "RAW-MEAT", "RAW-MEAT");
+        jdbc.sql("""
+                CREATE TRIGGER fail_prediction BEFORE INSERT ON predictions
+                BEGIN SELECT RAISE(ABORT, 'prediction unavailable'); END
+                """).update();
+        long id;
+        try {
+            id = ingest(session.id(), session.startedAt(), 9);
+            executor.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            assertThat(jdbc.sql("SELECT count(*) FROM readings WHERE id = ?").param(id).query(Long.class).single()).isOne();
+            assertThat(jdbc.sql("SELECT count(*) FROM predictions WHERE reading_id = ?").param(id).query(Long.class).single())
+                    .isZero();
+        } finally {
+            jdbc.sql("DROP TRIGGER fail_prediction").update();
+        }
+        assertThat(ingest(session.id(), session.startedAt(), 9)).isEqualTo(id);
+        awaitPrediction(id);
+        assertThat(jdbc.sql("SELECT count(*) FROM predictions WHERE reading_id=?").param(id).query(Long.class).single()).isOne();
+        assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE kind='THRESHOLD'").query(Long.class).single()).isOne();
     }
 
     private long ingest(long session, Instant at, double temperature) {

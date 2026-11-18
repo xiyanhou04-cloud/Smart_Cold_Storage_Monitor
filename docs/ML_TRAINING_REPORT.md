@@ -279,3 +279,12 @@ Historical predictions stay associated with the reading that produced them.
 The local [demo instructions](../README.md#local-risk-prediction-demonstration)
 show the authenticated latest-reading endpoint and the missing-artifact
 fallback.
+
+In the recovery audit, a 700-second monitoring gap followed by a valid
+five-second interval at 4.0032 °C restored the MODEL source. The model
+reported Medium from five seconds of observed exposure. If the upper limit
+had been exceeded continuously throughout all 705 seconds, the simulation
+rules for that hypothetical trajectory would report High. The history flag
+stays incomplete and the independent temperature alert stays active.
+This demonstrates possible underestimation after a gap. It does not establish
+what happened in the unobserved interval or alter the ML-2 test metrics.

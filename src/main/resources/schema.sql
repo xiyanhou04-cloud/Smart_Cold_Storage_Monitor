@@ -152,6 +152,14 @@ CREATE TABLE IF NOT EXISTS readings (
 
 CREATE INDEX IF NOT EXISTS idx_readings_session_time ON readings (session_id, measured_at);
 
+-- A null stopped_at means there's no durable evidence of an orderly stop.
+CREATE TABLE IF NOT EXISTS risk_monitoring_runs (
+    id         INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    stopped_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_risk_monitoring_runs_start ON risk_monitoring_runs (started_at, id);
+
 CREATE TABLE IF NOT EXISTS predictions (
     id                    INTEGER PRIMARY KEY,
     reading_id            INTEGER NOT NULL UNIQUE REFERENCES readings (id) ON DELETE CASCADE,
@@ -162,6 +170,17 @@ CREATE TABLE IF NOT EXISTS predictions (
     feature_snapshot      TEXT NOT NULL,
     quality_flag          TEXT NOT NULL
 );
+
+-- Each committed reading is durable work until its prediction is committed.
+CREATE TABLE IF NOT EXISTS prediction_jobs (
+    reading_id       INTEGER PRIMARY KEY REFERENCES readings (id) ON DELETE CASCADE,
+    failed_attempts  INTEGER NOT NULL DEFAULT 0,
+    next_attempt_ms  INTEGER NOT NULL DEFAULT 0,
+    terminal         INTEGER NOT NULL DEFAULT 0 CHECK (terminal IN (0, 1)),
+    failure_code     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_prediction_jobs_due ON prediction_jobs (terminal, next_attempt_ms, reading_id);
+
 
 -- ---------------------------------------------------------------------------------------------
 -- Alerts (FR-04 threshold excursions and, later, FR-05 risk warnings) share one table, one severity

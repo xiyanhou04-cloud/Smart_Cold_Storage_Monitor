@@ -21,10 +21,11 @@ public final class RulesRiskPredictor implements RiskPredictor {
 
     @Override
     public Estimate predict(RiskFeatures.Snapshot features, ThresholdLimits currentLimits) {
-        return fallback(features, currentLimits, features.incompleteHistory() ? Quality.INCOMPLETE_HISTORY : Quality.OK);
+        return fallback(features, currentLimits, Quality.from(features.currentIssue()));
     }
 
     Estimate fallback(RiskFeatures.Snapshot features, ThresholdLimits currentLimits, Quality quality) {
-        return new Estimate(rules.predict(features, currentLimits), AlertSource.RULES, RiskRules.VERSION, quality);
+        return new Estimate(rules.predict(features, currentLimits, features.currentIssue() != RiskFeatures.GapReason.NONE),
+                AlertSource.RULES, RiskRules.VERSION, quality);
     }
 }

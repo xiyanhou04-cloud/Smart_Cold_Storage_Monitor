@@ -5,23 +5,41 @@ import com.icu.smart_cold_storage_monitor.ml.RiskPredictor.Quality;
 import com.icu.smart_cold_storage_monitor.model.AlertSource;
 import com.icu.smart_cold_storage_monitor.model.Reading;
 import com.icu.smart_cold_storage_monitor.model.RiskLevel;
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@DependsOnDatabaseInitialization
 public class PredictionRepository {
 
     public record Checkpoint(Reading reading, String featureSnapshot) {}
+    public record Pending(Reading reading, int failedAttempts) {}
     public record Latest(Reading reading, RiskLevel riskLevel, AlertSource source, String modelOrRuleVersion,
-                         Instant predictedAt, Quality qualityFlag) {}
+                         Instant predictedAt, Quality qualityFlag, Boolean historicalExposureIncomplete,
+                         String currentGapReason, String lastGapReason) {}
 
     private final JdbcClient jdbc;
 
     public PredictionRepository(JdbcClient jdbc) {
         this.jdbc = jdbc;
+    }
+
+    @PostConstruct
+    void installTriggers() {
+        // Submit each SQLite trigger as one statement so the schema script splitter never splits its body.
+        jdbc.sql("""
+                CREATE TRIGGER IF NOT EXISTS enqueue_reading_prediction AFTER INSERT ON readings
+                BEGIN INSERT INTO prediction_jobs (reading_id) VALUES (NEW.id); END
+                """).update();
+        jdbc.sql("""
+                CREATE TRIGGER IF NOT EXISTS complete_reading_prediction AFTER INSERT ON predictions
+                BEGIN DELETE FROM prediction_jobs WHERE reading_id = NEW.reading_id; END
+                """).update();
     }
 
     public void insert(long readingId, Estimate estimate, Instant predictedAt, String snapshot) {
@@ -59,19 +77,44 @@ public class PredictionRepository {
                 .param("until", SqlTimestamps.format(reading.measuredAt())).query(ReadingRepository::mapRow).list();
     }
 
-    public List<Reading> pendingAfter(long session, Instant after, int limit) {
+    /** Backfills only missing work from databases that predate the enqueue trigger. */
+    public void enqueueExisting() {
+        jdbc.sql("""
+                INSERT INTO prediction_jobs (reading_id)
+                SELECT r.id FROM readings r
+                WHERE NOT EXISTS (SELECT 1 FROM predictions p WHERE p.reading_id = r.id)
+                  AND NOT EXISTS (SELECT 1 FROM prediction_jobs j WHERE j.reading_id = r.id)
+                """).update();
+    }
+
+    public List<Pending> due(long nowMillis, int limit) {
         return jdbc.sql("""
-                SELECT r.* FROM readings r LEFT JOIN predictions p ON p.reading_id = r.id
-                WHERE (r.session_id, r.measured_at) > (:session, :after) AND p.reading_id IS NULL
+                SELECT r.*, j.failed_attempts FROM prediction_jobs j JOIN readings r ON r.id = j.reading_id
+                WHERE j.terminal = 0 AND j.next_attempt_ms <= :now
                 ORDER BY r.session_id, r.measured_at LIMIT :limit
-                """).param("session", session).param("after", after == null ? "" : SqlTimestamps.format(after))
-                .param("limit", limit).query(ReadingRepository::mapRow).list();
+                """).param("now", nowMillis).param("limit", limit)
+                .query((rs, row) -> new Pending(ReadingRepository.mapRow(rs, row), rs.getInt("failed_attempts")))
+                .list();
+    }
+
+    public void recordFailure(long readingId, int attempts, long retryAt, boolean terminal, String code) {
+        jdbc.sql("""
+                UPDATE prediction_jobs SET failed_attempts=:attempts, next_attempt_ms=:retryAt,
+                    terminal=:terminal, failure_code=:code WHERE reading_id=:id
+                """).param("id", readingId).param("attempts", attempts).param("retryAt", retryAt)
+                .param("terminal", terminal ? 1 : 0).param("code", code).update();
     }
 
     public List<Latest> latest(String deviceId) {
         String deviceFilter = deviceId == null ? "" : " WHERE d.id = :device";
         var query = jdbc.sql("""
-                SELECT r.*, p.risk_level, p.source, p.model_or_rule_version, p.predicted_at, p.quality_flag
+                SELECT r.*, p.risk_level, p.source, p.model_or_rule_version, p.predicted_at, p.quality_flag,
+                  CASE WHEN json_valid(p.feature_snapshot) THEN
+                    json_extract(p.feature_snapshot, '$.features.incompleteHistory') END AS incomplete_history,
+                  CASE WHEN json_valid(p.feature_snapshot) THEN
+                    json_extract(p.feature_snapshot, '$.features.currentIssue') END AS current_gap_reason,
+                  CASE WHEN json_valid(p.feature_snapshot) THEN
+                    json_extract(p.feature_snapshot, '$.features.lastGapReason') END AS last_gap_reason
                 FROM devices d
                 JOIN readings r ON r.id = (SELECT id FROM readings WHERE device_id = d.id ORDER BY measured_at DESC LIMIT 1)
                 LEFT JOIN predictions p ON p.reading_id = r.id
@@ -82,10 +125,15 @@ public class PredictionRepository {
         return query.query((rs, row) -> {
             Reading reading = ReadingRepository.mapRow(rs, row);
             String risk = rs.getString("risk_level");
-            return risk == null ? new Latest(reading, null, null, null, null, null)
+            boolean incomplete = rs.getBoolean("incomplete_history");
+            Boolean historical = rs.wasNull() ? null : incomplete;
+            String lastGap = rs.getString("last_gap_reason");
+            return risk == null ? new Latest(reading, null, null, null, null, null, null, null, null)
                     : new Latest(reading, RiskLevel.valueOf(risk), AlertSource.valueOf(rs.getString("source")),
                             rs.getString("model_or_rule_version"), SqlTimestamps.parse(rs.getString("predicted_at")),
-                            Quality.valueOf(rs.getString("quality_flag")));
+                            Quality.valueOf(rs.getString("quality_flag")), historical,
+                            rs.getString("current_gap_reason"),
+                            lastGap == null && Boolean.TRUE.equals(historical) ? "LEGACY_UNATTRIBUTED" : lastGap);
         }).list();
     }
 }

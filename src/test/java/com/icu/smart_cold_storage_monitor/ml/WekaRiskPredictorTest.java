@@ -40,7 +40,7 @@ class WekaRiskPredictorTest {
     }
 
     @Test
-    void classifierExceptionFallsBackToRules() throws Exception {
+    void substitutedModelWithMatchingMetadataFallsBackToRules() throws Exception {
         WekaRiskModel original;
         try (var input = loader.getResource(BASE + ".model").getInputStream()) {
             original = WekaRiskModel.load(input);
@@ -55,8 +55,55 @@ class WekaRiskPredictorTest {
         }
         var result = predictor(directory.toUri() + "test", VERSION).predict(normal, LIMITS);
         assertThat(result.source()).isEqualTo(AlertSource.RULES);
-        assertThat(result.quality()).isEqualTo(RiskPredictor.Quality.MODEL_ERROR);
+        assertThat(result.quality()).isEqualTo(RiskPredictor.Quality.MODEL_INCOMPATIBLE);
         assertThat(result.level()).isEqualTo(RiskLevel.LOW);
+        var runtimeFailure = WekaRiskPredictor.predictWithModel(new WekaRiskModel(faulty, original.header()),
+                new RulesRiskPredictor(120, 600), VERSION, normal, LIMITS);
+        assertThat(runtimeFailure.quality()).isEqualTo(RiskPredictor.Quality.MODEL_ERROR);
+    }
+
+    @Test
+    void allowsApprovedExternalCopyAndRejectsCorruptionOrIncompatibleHeader() throws Exception {
+        Path base = Files.createDirectory(directory.resolve("with spaces")).resolve("test");
+        for (String suffix : new String[]{".model", ".json", "-header.arff"}) {
+            try (var input = loader.getResource(BASE + suffix).getInputStream()) {
+                Files.copy(input, Path.of(base + suffix));
+            }
+        }
+        String external = base.toUri().toString();
+        assertThat(predictor(external, VERSION).predict(normal, LIMITS).source()).isEqualTo(AlertSource.MODEL);
+        Path header = Path.of(base + "-header.arff");
+        String validHeader = Files.readString(header);
+        Files.writeString(header, validHeader.replace("temperatureC", "unexpectedFeature"));
+        assertIncompatible(external);
+        Files.writeString(header, validHeader.replace("LOW,MEDIUM,HIGH", "MEDIUM,LOW,HIGH"));
+        assertIncompatible(external);
+        Files.writeString(header, validHeader);
+        Files.write(Path.of(base + ".model"), new byte[]{1, 2, 3});
+        assertIncompatible(external);
+        assertIncompatible("https://example.invalid/untrusted-risk");
+    }
+
+    @Test
+    void rejectsWrongFeatureOrderAndCategoryMappingInMetadata() throws Exception {
+        for (String suffix : new String[]{".model", ".json", "-header.arff"}) {
+            try (var input = loader.getResource(BASE + suffix).getInputStream()) {
+                Files.copy(input, directory.resolve("test" + suffix));
+            }
+        }
+        String external = directory.resolve("test").toUri().toString();
+        Path metadata = directory.resolve("test.json");
+        String original = Files.readString(metadata);
+        Files.writeString(metadata, original.replace("\"temperatureC\", \"humidityPct\"", "\"humidityPct\", \"temperatureC\""));
+        assertIncompatible(external);
+        Files.writeString(metadata, original.replace("\"RAW_MEAT\"", "\"UNKNOWN\""));
+        assertIncompatible(external);
+    }
+
+    private void assertIncompatible(String base) {
+        var result = predictor(base, VERSION).predict(normal, LIMITS);
+        assertThat(result.source()).isEqualTo(AlertSource.RULES);
+        assertThat(result.quality()).isEqualTo(RiskPredictor.Quality.MODEL_INCOMPATIBLE);
     }
 
     private WekaRiskPredictor predictor(String base, String version) {

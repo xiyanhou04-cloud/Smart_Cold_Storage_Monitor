@@ -102,6 +102,26 @@ class ReadingQueryApiTest extends SqliteIntegrationTest {
     }
 
     @Test
+    void subMillisecondWindowKeepsExactHalfOpenBoundsAcrossASecond() throws Exception {
+        long session = jdbc.sql("SELECT id FROM storage_sessions WHERE device_id=?").param(A).query(Long.class).single();
+        Instant before = Instant.parse("2026-11-13T00:00:09.999Z");
+        Instant at = before.plusMillis(1);
+        reading(A, session, before.minusMillis(1), 2.0, 70.0);
+        reading(A, session, at, 4.0, 70.0);
+        reading(A, session, before, 3.0, 70.0);
+        reading(A, session, at.plusMillis(1), 5.0, 70.0);
+
+        assertThat(values(json(query().param("deviceId", A).param("from", before.plusNanos(500_000).toString())
+                .param("to", at.plusNanos(500_000).toString())).get(A).get("temperatureC"))).containsExactly(4.0);
+        var exact = json(query().param("deviceId", A).param("from", before.toString())
+                .param("to", at.plusMillis(1).toString())).get(A).get("temperatureC");
+        assertThat(values(exact)).containsExactly(3.0, 4.0);
+        assertThat(exact.get(0).get("timestamp").asString()).isEqualTo(before.toString());
+        assertThat(exact.get(1).get("timestamp").asString()).isEqualTo(at.toString());
+        mvc.perform(query().param("from", at.toString()).param("to", at.toString())).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void noRegisteredDevicesGivesAnEmptyObject() throws Exception {
         jdbc.sql("DELETE FROM readings").update();
         jdbc.sql("DELETE FROM threshold_settings").update();

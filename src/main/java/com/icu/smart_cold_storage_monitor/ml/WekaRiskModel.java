@@ -31,8 +31,8 @@ public record WekaRiskModel(Classifier classifier, Instances header) {
 
     static Instance encode(Instances schema, Snapshot snapshot, RiskLevel label) {
         int product = schema.attribute("productType").indexOfValue(snapshot.productType());
-        if (snapshot.incompleteHistory() || product < 0) {
-            throw new IllegalArgumentException("A supported product and complete exposure history are required.");
+        if (snapshot.currentIssue() != RiskFeatures.GapReason.NONE || product < 0) {
+            throw new IllegalArgumentException("A supported product and valid current observation interval are required.");
         }
         Instance instance = new DenseInstance(1, new double[] {
                 snapshot.temperatureC(), snapshot.humidityPct(), snapshot.observedAboveUpperSeconds(),

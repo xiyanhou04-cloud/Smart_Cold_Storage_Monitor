@@ -33,6 +33,9 @@ class RiskRestartIntegrationTest {
             // Direct inserts represent readings committed before their prediction task could run.
             second = readings.insert(session.deviceId(), session.id(), base.plusSeconds(5), base, 5, 70, threshold).id();
             first = readings.insert(session.deviceId(), session.id(), base, base, 5, 70, threshold).id();
+            // Simulate upgrading an earlier SQLite database with readings that have no queue records yet.
+            app.getBean(JdbcClient.class).sql("DELETE FROM prediction_jobs WHERE reading_id IN (?, ?)")
+                    .params(first, second).update();
         }
         try (var app = start("--app.risk.model-version=incompatible-version")) {
             waitForWorker(app);
@@ -56,7 +59,8 @@ class RiskRestartIntegrationTest {
     private ConfigurableApplicationContext start(String modelArgument) {
         return new SpringApplicationBuilder(SmartColdStorageMonitorApplication.class).run(
                 "--server.port=0", "--app.simulator.enabled=false",
-                "--app.database.path=" + directory.resolve("restart.sqlite"), modelArgument);
+                "--app.database.path=" + directory.resolve("restart.sqlite"),
+                "--app.risk.poll-interval=PT1H", modelArgument);
     }
 
     private static void waitForWorker(ConfigurableApplicationContext app) throws Exception {

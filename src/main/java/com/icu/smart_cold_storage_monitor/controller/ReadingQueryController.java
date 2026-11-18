@@ -48,7 +48,8 @@ public class ReadingQueryController {
     }
 
     public record RiskSummary(String riskLevel, String source, String modelOrRuleVersion,
-                              Instant predictedAt, String qualityFlag) {}
+                              Instant predictedAt, String qualityFlag, Boolean historicalExposureIncomplete,
+                              String currentGapReason, String lastGapReason) {}
 
     public record LatestReading(ReadingResponse reading, boolean stale, RiskSummary prediction) {}
 
@@ -61,7 +62,8 @@ public class ReadingQueryController {
         Instant staleBefore = clock.instant().minus(staleAfter);
         for (var row : predictions.latest(deviceId)) {
             RiskSummary risk = row.riskLevel() == null ? null : new RiskSummary(row.riskLevel().name(),
-                    row.source().name(), row.modelOrRuleVersion(), row.predictedAt(), row.qualityFlag().name());
+                    row.source().name(), row.modelOrRuleVersion(), row.predictedAt(), row.qualityFlag().name(),
+                    row.historicalExposureIncomplete(), row.currentGapReason(), row.lastGapReason());
             body.put(row.reading().deviceId(), new LatestReading(ReadingResponse.from(row.reading()),
                     row.reading().measuredAt().isBefore(staleBefore), risk));
         }

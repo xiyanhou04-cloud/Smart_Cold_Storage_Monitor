@@ -16,10 +16,14 @@ public record RiskRules(long mediumAfterSeconds, long highAfterSeconds) {
     }
 
     public RiskLevel predict(Snapshot snapshot, ThresholdLimits limits) {
+        return predict(snapshot, limits, snapshot.incompleteHistory());
+    }
+
+    RiskLevel predict(Snapshot snapshot, ThresholdLimits limits, boolean missingInterval) {
         if (snapshot.observedAboveUpperSeconds() >= highAfterSeconds) {
             return RiskLevel.HIGH;
         }
-        if (snapshot.observedAboveUpperSeconds() >= mediumAfterSeconds || snapshot.incompleteHistory()
+        if (snapshot.observedAboveUpperSeconds() >= mediumAfterSeconds || missingInterval
                 || limits == null || snapshot.temperatureC() < limits.temperatureLowerC()
                 || snapshot.temperatureC() > limits.temperatureUpperC()) {
             return RiskLevel.MEDIUM;
