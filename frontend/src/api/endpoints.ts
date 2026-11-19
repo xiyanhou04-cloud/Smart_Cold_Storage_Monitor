@@ -8,6 +8,7 @@ import type {
   Credential,
   CurrentUser,
   DeviceThreshold,
+  LatestByDevice,
   Page,
   ReadingsByDevice,
   Role,
@@ -47,6 +48,8 @@ export function createApi(http: HttpClient) {
     readings: {
       query: (params: { deviceId?: string[]; metric?: string[]; window?: string; from?: string; to?: string }) =>
         http.get<ReadingsByDevice>('/api/readings/query', params),
+      latest: (deviceId?: string) =>
+        http.get<LatestByDevice>('/api/readings/latest', deviceId ? { deviceId } : undefined),
     },
 
     thresholds: {
