@@ -24,7 +24,7 @@ export function Notice({
   children,
   onClose,
 }: {
-  tone: 'ok' | 'danger' | 'info';
+  tone: 'ok' | 'warn' | 'danger' | 'info';
   children: ReactNode;
   onClose?: () => void;
 }) {

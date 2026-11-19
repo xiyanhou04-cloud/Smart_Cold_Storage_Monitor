@@ -45,6 +45,45 @@ describe('sign-in and dashboard', () => {
     expect(backend.audit[0].eventType).toBe('LOGIN_SUCCESS');
   });
 
+  it('shows each zone risk and warns about incomplete reading history', async () => {
+    const backend = new FakeBackend({ signedInAs: 'admin' });
+    const user = userEvent.setup();
+    start(backend);
+
+    const zones = await screen.findByRole('region', { name: 'Zones' });
+    await within(zones).findByRole('button', { name: /RAW-MEAT .* risk HIGH$/ });
+    expect(
+      within(zones).getByRole('button', { name: /VEG-COOL .* risk MEDIUM incomplete history/ }),
+    ).toBeInTheDocument();
+    expect(within(zones).getByRole('button', { name: /EGGS .* risk LOW incomplete history/ })).toBeInTheDocument();
+    expect(within(zones).getAllByText('Incomplete history')).toHaveLength(2);
+    expect(within(zones).getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText(/Incomplete reading history in 2 zones/).closest('.notice')).toHaveTextContent(
+      'VEG-COOL, EGGS. Readings are missing',
+    );
+
+    // A LOW model rating after an earlier gap is explained as possibly understated.
+    await user.click(within(zones).getByRole('button', { name: /^EGGS/ }));
+    const panel = await screen.findByRole('region', { name: 'Risk prediction' });
+    expect(within(panel).getByText('ML model')).toBeInTheDocument();
+    expect(within(panel).getByText(/gap earlier in this storage session/)).toBeInTheDocument();
+    expect(within(panel).getByText(/Monitoring was stopped/)).toBeInTheDocument();
+    expect(within(panel).getByText(/may be lower than the real risk/)).toBeInTheDocument();
+
+    // A reading straight after a gap was rated by the rules.
+    await user.click(within(zones).getByRole('button', { name: /^VEG-COOL/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Risk prediction' })).toHaveTextContent('Rules fallback'),
+    );
+    expect(screen.getByText(/ML model was not used/)).toBeInTheDocument();
+
+    // Complete history: no warning.
+    await user.click(within(zones).getByRole('button', { name: /^RAW-MEAT/ }));
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Risk prediction' })).toHaveTextContent('Complete'));
+    expect(screen.queryByText(/may be lower than the real risk/)).not.toBeInTheDocument();
+    expect(backend.log.some((r) => r.path === '/api/readings/latest')).toBe(true);
+  });
+
   it('rejects a wrong password with the server message', async () => {
     const user = userEvent.setup();
     start(new FakeBackend());

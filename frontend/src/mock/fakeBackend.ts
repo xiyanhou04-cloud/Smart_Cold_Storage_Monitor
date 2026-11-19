@@ -2,8 +2,10 @@ import type {
   Alert,
   AuditEvent,
   DeviceThreshold,
+  LatestByDevice,
   ReadingPoint,
   ReadingsByDevice,
+  RiskSummary,
   Role,
   ThresholdLimits,
   ThresholdRequest,
@@ -57,6 +59,64 @@ const STEP_MS = 5000;
 const STALE_DEVICE = 'ESP32-SIM-006';
 const HOT_DEVICE = 'ESP32-SIM-001';
 
+type Prediction = Omit<RiskSummary, 'predictedAt'>;
+const MODEL_VERSION = 'random-forest-v1';
+const complete = { historicalExposureIncomplete: false, currentGapReason: 'NONE', lastGapReason: 'NONE' } as const;
+/**
+ * Latest prediction per zone, covering each case the dashboard distinguishes: complete history (model), a gap that
+ * ends at the current reading (rules fallback), a gap earlier in the session (model, possibly underestimated), and a
+ * reading not scored yet (null).
+ */
+const PREDICTIONS: Record<string, Prediction | null> = {
+  'ESP32-SIM-001': {
+    riskLevel: 'HIGH',
+    source: 'MODEL',
+    modelOrRuleVersion: MODEL_VERSION,
+    qualityFlag: 'OK',
+    ...complete,
+  },
+  'ESP32-SIM-002': {
+    riskLevel: 'LOW',
+    source: 'MODEL',
+    modelOrRuleVersion: MODEL_VERSION,
+    qualityFlag: 'OK',
+    ...complete,
+  },
+  'ESP32-SIM-003': {
+    riskLevel: 'MEDIUM',
+    source: 'RULES',
+    modelOrRuleVersion: 'simulated-exposure-v1',
+    qualityFlag: 'INCOMPLETE_HISTORY',
+    historicalExposureIncomplete: true,
+    currentGapReason: 'RUNNING_DATA_GAP',
+    lastGapReason: 'RUNNING_DATA_GAP',
+  },
+  'ESP32-SIM-004': {
+    riskLevel: 'LOW',
+    source: 'MODEL',
+    modelOrRuleVersion: MODEL_VERSION,
+    qualityFlag: 'OK',
+    historicalExposureIncomplete: true,
+    currentGapReason: 'NONE',
+    lastGapReason: 'ORDERLY_MONITORING_INTERRUPTION',
+  },
+  'ESP32-SIM-005': {
+    riskLevel: 'LOW',
+    source: 'MODEL',
+    modelOrRuleVersion: MODEL_VERSION,
+    qualityFlag: 'OK',
+    ...complete,
+  },
+  'ESP32-SIM-006': {
+    riskLevel: 'LOW',
+    source: 'MODEL',
+    modelOrRuleVersion: MODEL_VERSION,
+    qualityFlag: 'OK',
+    ...complete,
+  },
+  'ESP32-SIM-007': null,
+};
+
 interface StoredUser extends User {
   password: string;
 }
@@ -71,6 +131,8 @@ export class FakeBackend {
   readonly now: () => number;
   users: StoredUser[] = [];
   thresholds = new Map<string, DeviceThreshold>();
+  /** Latest prediction per device; tests may replace entries. */
+  predictions: Record<string, Prediction | null> = structuredClone(PREDICTIONS);
   requests: ThresholdRequest[] = [];
   alerts: Alert[] = [];
   audit: AuditEvent[] = [];
@@ -154,6 +216,32 @@ export class FakeBackend {
     return out;
   }
 
+  /** GET /api/readings/latest: newest reading per device with its prediction, keyed by device id. */
+  latest(deviceIds: string[]): LatestByDevice {
+    const out: LatestByDevice = {};
+    deviceIds.forEach((id, i) => {
+      const last = id === STALE_DEVICE ? this.now() - 40_000 : this.now();
+      const measured = Math.floor((last - 1) / STEP_MS) * STEP_MS;
+      const measuredAt = new Date(measured).toISOString();
+      const prediction = this.predictions[id];
+      out[id] = {
+        reading: {
+          id: Math.floor(measured / STEP_MS) * 10 + i,
+          deviceId: id,
+          sessionId: i + 1,
+          measuredAt,
+          receivedAt: new Date(measured + 40).toISOString(),
+          temperatureC: this.valueAt(id, 'temperature', measured),
+          humidityPct: this.valueAt(id, 'humidity', measured),
+          thresholdId: i + 1,
+        },
+        stale: this.now() - measured > 30_000,
+        prediction: prediction ? { ...prediction, predictedAt: new Date(measured + 120).toISOString() } : null,
+      };
+    });
+    return out;
+  }
+
   // ---------------------------------------------------------------- fetch
 
   fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
@@ -215,6 +303,11 @@ export class FakeBackend {
     }
     if (method === 'GET' && path === '/api/auth/me') return json(200, { username: me!.username, role: me!.role });
 
+    if (method === 'GET' && path === '/api/readings/latest') {
+      const id = q.get('deviceId');
+      // Like the backend, an unknown device simply has no entry.
+      return json(200, this.latest(id ? [id].filter((d) => this.thresholds.has(d)) : [...this.thresholds.keys()]));
+    }
     if (method === 'GET' && path === '/api/readings/query') {
       const ids = list(q, 'deviceId');
       const unknown = ids.find((id) => !this.thresholds.has(id));

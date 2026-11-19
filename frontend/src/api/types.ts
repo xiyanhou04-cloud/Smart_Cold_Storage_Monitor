@@ -39,6 +39,72 @@ export interface DeviceReadings {
 /** Response of GET /api/readings/query: keyed by device id, in id order. */
 export type ReadingsByDevice = Record<string, DeviceReadings>;
 
+// ---- Latest reading and risk prediction (FR-05) ----
+
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+/** `AlertSource` minus THRESHOLD: a prediction comes from the trained model or the rules fallback. */
+export type PredictionSource = 'MODEL' | 'RULES';
+
+/** `RiskPredictor.Quality`: why a prediction may be less reliable. OK means the model scored the reading. */
+export type QualityFlag =
+  | 'OK'
+  | 'MODEL_MISSING'
+  | 'MODEL_INCOMPATIBLE'
+  | 'MODEL_ERROR'
+  | 'UNKNOWN_PRODUCT'
+  | 'INCOMPLETE_HISTORY'
+  | 'MONITORING_INTERRUPTED'
+  | 'MONITORING_INTERRUPTION_UNKNOWN';
+
+/** `RiskFeatures.GapReason`: why part of a storage session's reading history is missing. */
+export type GapReason =
+  | 'NONE'
+  | 'RUNNING_DATA_GAP'
+  | 'ORDERLY_MONITORING_INTERRUPTION'
+  | 'UNCONFIRMED_MONITORING_INTERRUPTION'
+  | 'MONITORING_INTERRUPTION_WITH_RUNNING_GAP'
+  | 'UNOBSERVED_PREFIX'
+  | 'MISSING_THRESHOLD'
+  | 'LEGACY_UNATTRIBUTED';
+
+/** `ReadingResponse`: one stored reading. */
+export interface Reading {
+  id: number;
+  deviceId: string;
+  sessionId: number;
+  measuredAt: string;
+  receivedAt: string;
+  temperatureC: number;
+  humidityPct: number;
+  thresholdId: number | null;
+}
+
+/** `ReadingQueryController.RiskSummary`. The gap fields are null on predictions stored before they existed. */
+export interface RiskSummary {
+  riskLevel: RiskLevel;
+  source: PredictionSource;
+  modelOrRuleVersion: string;
+  predictedAt: string;
+  qualityFlag: QualityFlag;
+  /** True once any gap in this storage session left time above the limit uncounted. */
+  historicalExposureIncomplete: boolean | null;
+  /** Gap that ends at this reading; anything but NONE means the rules scored it instead of the model. */
+  currentGapReason: GapReason | null;
+  /** Most recent gap in this session, possibly long before this reading. */
+  lastGapReason: GapReason | null;
+}
+
+/** `ReadingQueryController.LatestReading`. `prediction` is null while the reading waits to be scored. */
+export interface LatestReading {
+  reading: Reading;
+  /** Measured more than `app.risk.stale-after` (30 s) ago, by the server's clock. */
+  stale: boolean;
+  prediction: RiskSummary | null;
+}
+
+/** Response of GET /api/readings/latest: keyed by device id; devices without readings are absent. */
+export type LatestByDevice = Record<string, LatestReading>;
+
 // ---- Thresholds (FR-04) ----
 
 export type ThresholdRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'SUPERSEDED';

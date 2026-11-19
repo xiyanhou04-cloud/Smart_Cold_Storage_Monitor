@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import { useApi } from '../api/ApiContext';
 import type { ReadingsByDevice } from '../api/types';
 import { DeviceCard } from '../components/DeviceCard';
+import { RiskPanel } from '../components/RiskPanel';
 import { TrendChart } from '../components/TrendChart';
-import { Badge, ErrorNotice, PageHeader } from '../components/ui';
+import { Badge, ErrorNotice, Notice, PageHeader } from '../components/ui';
 import { formatClock, formatDuration } from '../domain/format';
+import { hasHistoryGap, riskView } from '../domain/risk';
 import { buildSnapshots, mergeSeries, summarize } from '../domain/status';
 import { usePolling } from '../hooks/usePolling';
 
@@ -28,6 +30,10 @@ const WINDOWS = [
  * /api/settings/thresholds`, every 10 s, since they rarely change). `buildSnapshots` joins them into one card per
  * zone. The trend chart polls the selected device separately for the chosen window (at most 6 hours, the backend's
  * limit). When a poll fails, the last data stays on screen and the header shows "Connection lost".
+ *
+ * A fourth poll, `GET /api/readings/latest` every 2 s, carries each zone's latest risk prediction (FR-05): level,
+ * source (model or rules) and whether the reading history behind it is complete. Zones whose rating rests on
+ * incomplete history are flagged on the card, in a page-level notice, and explained in the selected zone's panel.
  */
 export function DashboardPage() {
   const api = useApi();
@@ -37,6 +43,11 @@ export function DashboardPage() {
   const readings = usePolling(() => api.readings.query({ window: CARD_WINDOW }), DASHBOARD_POLL_MS, [api]);
   const thresholds = usePolling(() => api.thresholds.list(), 10_000, [api]);
   const alerts = usePolling(() => api.alerts.search({ state: 'ACTIVE', size: 200 }), DASHBOARD_POLL_MS, [api]);
+  const latest = usePolling(() => api.readings.latest(), DASHBOARD_POLL_MS, [api]);
+  const risks = useMemo(
+    () => new Map(Object.entries(latest.data ?? {}).map(([id, l]) => [id, riskView(l)])),
+    [latest.data],
+  );
 
   const snapshots = useMemo(
     () => buildSnapshots(readings.data, thresholds.data, alerts.data?.items, Date.now()),
@@ -57,6 +68,11 @@ export function DashboardPage() {
   const activeAlerts = alerts.data?.items ?? [];
   const unacked = activeAlerts.filter((a) => !a.acknowledgment).length;
   const connectionLost = Boolean(readings.error) && readings.data !== undefined;
+  const gapZones = snapshots.filter((s) => {
+    const view = risks.get(s.deviceId);
+    return view !== undefined && hasHistoryGap(view);
+  });
+  const currentRisk = deviceId ? risks.get(deviceId) : undefined;
 
   return (
     <>
@@ -94,12 +110,26 @@ export function DashboardPage() {
         />
       </section>
 
+      {gapZones.length > 0 && (
+        <Notice tone="warn">
+          <span>
+            <strong>
+              <span aria-hidden="true">⚠</span> Incomplete reading history in {gapZones.length} zone
+              {gapZones.length > 1 ? 's' : ''}:
+            </strong>{' '}
+            {gapZones.map((s) => s.locationCode ?? s.deviceId).join(', ')}. Readings are missing for part of the storage
+            session, so the risk rating may understate the real risk. Select a zone for details.
+          </span>
+        </Notice>
+      )}
+
       <section className="device-grid" aria-label="Zones">
         {readings.loading && snapshots.length === 0 && <div className="muted">Loading zones…</div>}
         {snapshots.map((s) => (
           <DeviceCard
             key={s.deviceId}
             snapshot={s}
+            risk={risks.get(s.deviceId)}
             selected={s.deviceId === deviceId}
             onSelect={() => setSelected(s.deviceId)}
           />
@@ -127,6 +157,7 @@ export function DashboardPage() {
               ))}
             </div>
           </div>
+          {currentRisk && <RiskPanel view={currentRisk} />}
           <ErrorNotice error={history.error} />
           <div className="chart-grid">
             <TrendChart metric="temperature" points={points} threshold={current.threshold} />

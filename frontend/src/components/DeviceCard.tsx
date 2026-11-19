@@ -1,6 +1,10 @@
 import type { DeviceSnapshot, DeviceStatus, RangeCheck } from '../domain/status';
 import { formatAge, formatHumidity, formatRange, formatTemperature } from '../domain/format';
+import { hasHistoryGap, type RiskView } from '../domain/risk';
+import type { RiskLevel } from '../api/types';
 import { Badge, type Tone } from './ui';
+
+export const RISK_TONE: Record<RiskLevel, Tone> = { LOW: 'ok', MEDIUM: 'warn', HIGH: 'danger' };
 
 const STATUS: Record<DeviceStatus, { tone: Tone; label: string }> = {
   OK: { tone: 'ok', label: 'In range' },
@@ -28,14 +32,17 @@ function checkLabel(check: RangeCheck): string | null {
 /**
  * One zone on the dashboard: latest temperature and humidity against the zone's limits, freshness, and active alerts
  * (FR-03). The status comes from `buildSnapshots` in `domain/status.ts`; a stale card greys its values out because
- * they may no longer describe the zone.
+ * they may no longer describe the zone. The risk row shows the latest prediction (FR-05) and flags a rating that
+ * rests on incomplete history, so a LOW after a gap is not read as "safe".
  */
 export function DeviceCard({
   snapshot,
+  risk,
   selected,
   onSelect,
 }: {
   snapshot: DeviceSnapshot;
+  risk?: RiskView;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -43,13 +50,15 @@ export function DeviceCard({
   const status = STATUS[s.status];
   const stale = s.freshness !== 'LIVE';
   const t = s.threshold;
+  const gap = risk ? hasHistoryGap(risk) : false;
+  const riskText = risk?.state === 'PREDICTED' ? ` risk ${risk.level}${gap ? ' incomplete history' : ''}` : '';
   return (
     <button
       type="button"
       className={`device-card status-${s.status.toLowerCase()}${selected ? ' selected' : ''}`}
       onClick={onSelect}
       aria-pressed={selected}
-      aria-label={`${s.locationCode ?? s.deviceId} ${status.label}`}
+      aria-label={`${s.locationCode ?? s.deviceId} ${status.label}${riskText}`}
     >
       <div className="device-card-head">
         <div>
@@ -76,6 +85,24 @@ export function DeviceCard({
           </div>
         </div>
       </div>
+      {risk && risk.state !== 'NONE' && (
+        <div className="risk-row">
+          <span className="risk-label">Risk</span>
+          {risk.state === 'PENDING' ? (
+            <Badge tone="muted">Pending</Badge>
+          ) : (
+            <>
+              <Badge tone={RISK_TONE[risk.level!]}>{risk.level}</Badge>
+              <span className="muted">{risk.source === 'MODEL' ? 'ML model' : 'Rules'}</span>
+              {gap && (
+                <Badge tone="warn">
+                  <span aria-hidden="true">⚠</span> Incomplete history
+                </Badge>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div className="device-card-foot">
         <span className={stale ? 'warn-text' : 'muted'}>Updated {formatAge(s.ageMs)}</span>
         {s.activeAlerts > 0 && (
