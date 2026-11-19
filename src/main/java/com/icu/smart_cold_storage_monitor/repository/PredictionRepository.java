@@ -3,11 +3,17 @@ package com.icu.smart_cold_storage_monitor.repository;
 import com.icu.smart_cold_storage_monitor.ml.RiskPredictor.Estimate;
 import com.icu.smart_cold_storage_monitor.ml.RiskPredictor.Quality;
 import com.icu.smart_cold_storage_monitor.model.AlertSource;
+import com.icu.smart_cold_storage_monitor.model.Prediction;
 import com.icu.smart_cold_storage_monitor.model.Reading;
 import com.icu.smart_cold_storage_monitor.model.RiskLevel;
 import jakarta.annotation.PostConstruct;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -23,10 +29,95 @@ public class PredictionRepository {
                          Instant predictedAt, Quality qualityFlag, Boolean historicalExposureIncomplete,
                          String currentGapReason, String lastGapReason) {}
 
+    /** Columns of a prediction with its reading; feature and gap fields are read from the stored snapshot. */
+    private static final String HISTORY_COLUMNS = """
+            p.id, p.reading_id, r.device_id, r.session_id, r.measured_at, r.temperature_c, r.humidity_pct,
+            r.threshold_id, p.risk_level, p.source, p.model_or_rule_version, p.predicted_at, p.quality_flag,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.observedAboveUpperSeconds') END AS observed_above_upper,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.elapsedStorageSeconds') END AS elapsed_storage,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.productType') END AS product_type,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.incompleteHistory') END AS incomplete_history,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.currentIssue') END AS current_gap_reason,
+            CASE WHEN json_valid(p.feature_snapshot) THEN
+              json_extract(p.feature_snapshot, '$.features.lastGapReason') END AS last_gap_reason""";
+
     private final JdbcClient jdbc;
 
     public PredictionRepository(JdbcClient jdbc) {
         this.jdbc = jdbc;
+    }
+
+    /** One page of matching predictions, most recently measured reading first. */
+    public List<Prediction> search(PredictionFilter filter, long offset, int limit) {
+        Map<String, Object> params = new HashMap<>();
+        String where = historyWhere(filter, params);
+        params.put("limit", limit);
+        params.put("offset", offset);
+        return jdbc.sql("SELECT " + HISTORY_COLUMNS + "\nFROM predictions p JOIN readings r ON r.id = p.reading_id\n"
+                        + where + "ORDER BY r.measured_at DESC, p.id DESC LIMIT :limit OFFSET :offset")
+                .params(params)
+                .query(PredictionRepository::mapPrediction)
+                .list();
+    }
+
+    public long count(PredictionFilter filter) {
+        Map<String, Object> params = new HashMap<>();
+        return jdbc.sql("SELECT COUNT(*) FROM predictions p JOIN readings r ON r.id = p.reading_id\n"
+                        + historyWhere(filter, params))
+                .params(params)
+                .query(Long.class)
+                .single();
+    }
+
+    /**
+     * Builds the WHERE clause from fixed SQL fragments only; every filter value is bound as a named parameter.
+     * Returns an empty string, or {@code "WHERE ...\n"}, and fills {@code params}.
+     */
+    private static String historyWhere(PredictionFilter filter, Map<String, Object> params) {
+        List<String> conditions = new ArrayList<>();
+        if (!filter.deviceIds().isEmpty()) {
+            conditions.add("r.device_id IN (:deviceIds)");
+            params.put("deviceIds", filter.deviceIds().stream().sorted().toList());
+        }
+        if (!filter.riskLevels().isEmpty()) {
+            conditions.add("p.risk_level IN (:riskLevels)");
+            params.put("riskLevels", filter.riskLevels().stream().map(Enum::name).sorted().toList());
+        }
+        if (filter.from() != null) {
+            conditions.add("r.measured_at >= :from");
+            params.put("from", SqlTimestamps.formatRangeBound(filter.from()));
+        }
+        if (filter.to() != null) {
+            conditions.add("r.measured_at < :to");
+            params.put("to", SqlTimestamps.formatRangeBound(filter.to()));
+        }
+        return conditions.isEmpty() ? "" : "WHERE " + String.join(" AND ", conditions) + "\n";
+    }
+
+    private static Prediction mapPrediction(ResultSet rs, int rowNum) throws SQLException {
+        long thresholdId = rs.getLong("threshold_id");
+        Long threshold = rs.wasNull() ? null : thresholdId;
+        double observed = rs.getDouble("observed_above_upper");
+        Double observedAboveUpper = rs.wasNull() ? null : observed;
+        double elapsed = rs.getDouble("elapsed_storage");
+        Double elapsedStorage = rs.wasNull() ? null : elapsed;
+        boolean incomplete = rs.getBoolean("incomplete_history");
+        Boolean historical = rs.wasNull() ? null : incomplete;
+        String lastGap = rs.getString("last_gap_reason");
+        return new Prediction(rs.getLong("id"), rs.getLong("reading_id"), rs.getString("device_id"),
+                rs.getLong("session_id"), SqlTimestamps.parse(rs.getString("measured_at")),
+                rs.getDouble("temperature_c"), rs.getDouble("humidity_pct"), threshold,
+                RiskLevel.valueOf(rs.getString("risk_level")), AlertSource.valueOf(rs.getString("source")),
+                rs.getString("model_or_rule_version"), SqlTimestamps.parse(rs.getString("predicted_at")),
+                rs.getString("quality_flag"), observedAboveUpper, elapsedStorage, rs.getString("product_type"),
+                historical, rs.getString("current_gap_reason"),
+                // Snapshots written before gap reasons existed only carry the history flag.
+                lastGap == null && Boolean.TRUE.equals(historical) ? "LEGACY_UNATTRIBUTED" : lastGap);
     }
 
     @PostConstruct

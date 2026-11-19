@@ -88,6 +88,15 @@ class OpenApiDocsTest extends SqliteIntegrationTest {
                 .andExpect(jsonPath("$.paths['/api/alerts/{id}/acknowledgment'].post.requestBody").exists())
                 .andExpect(jsonPath("$.paths['/api/alerts/{id}/acknowledgment'].post"
                         + ".parameters[?(@.name == 'user')]").doesNotExist())
+                // Prediction history and the latest reading are signed-in GETs: session only.
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.security[0].session").exists())
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.security[0].csrf").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.parameters[?(@.name == 'deviceId')]").exists())
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.parameters[?(@.name == 'riskLevel')]").exists())
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.parameters[?(@.name == 'from')]").exists())
+                .andExpect(jsonPath("$.paths['/api/predictions'].get.parameters[?(@.name == 'to')]").exists())
+                .andExpect(jsonPath("$.paths['/api/readings/latest'].get.security[0].session").exists())
+                .andExpect(jsonPath("$.paths['/api/readings/latest'].get.security[0].csrf").doesNotExist())
                 // The CsrfToken and principal method arguments are framework-injected, not client parameters.
                 .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
                 .andExpect(jsonPath("$.paths['/api/auth/me'].get.parameters").doesNotExist());
