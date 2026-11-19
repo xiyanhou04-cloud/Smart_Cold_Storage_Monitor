@@ -1,0 +1,10 @@
+@relation risk-features-v1
+
+@attribute temperatureC numeric
+@attribute humidityPct numeric
+@attribute observedAboveUpperSeconds numeric
+@attribute elapsedStorageSeconds numeric
+@attribute productType {EGGS,FRUIT,PRODUCE,RAW_MEAT}
+@attribute riskLevel {LOW,MEDIUM,HIGH}
+
+@data

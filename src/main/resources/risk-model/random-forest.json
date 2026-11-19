@@ -1,0 +1,38 @@
+{
+  "modelVersion" : "random-forest-ml2-v1",
+  "featureVersion" : "risk-features-v1",
+  "featureOrder" : [ "temperatureC", "humidityPct", "observedAboveUpperSeconds", "elapsedStorageSeconds", "productType" ],
+  "units" : [ "C", "%RH", "s", "s", "nominal" ],
+  "products" : [ "EGGS", "FRUIT", "PRODUCE", "RAW_MEAT" ],
+  "classes" : [ "LOW", "MEDIUM", "HIGH" ],
+  "javaVersion" : "21.0.12.1",
+  "wekaVersion" : "3.8.6",
+  "dataSha256" : "22167df49ae5c13ca445e55ac1a25169e48a15eba4db6bdfb6750f9c3bdfda02",
+  "generatorVersion" : "cold-storage-scenarios-v1",
+  "labelRuleVersion" : "simulated-exposure-v1",
+  "labelCutoffs" : {
+    "mediumAfterSeconds" : 120,
+    "highAfterSeconds" : 600
+  },
+  "maximumObservedIntervalSeconds" : 30,
+  "splitVersion" : "region-high-presence-v1",
+  "seed" : 5010,
+  "chosenSetting" : "trees=60, maxDepth=8",
+  "classifierOptions" : [ "-P", "100", "-I", "60", "-num-slots", "1", "-K", "0", "-M", "1.0", "-V", "0.001", "-S", "5010", "-depth", "8" ],
+  "validationTrials" : [ {
+    "setting" : "trees=60, maxDepth=8",
+    "options" : [ "-P", "100", "-I", "60", "-num-slots", "1", "-K", "0", "-M", "1.0", "-V", "0.001", "-S", "5010", "-depth", "8" ],
+    "validationSceneMacroF1" : 0.9427859771085875,
+    "fitMillis" : 1253.5044
+  }, {
+    "setting" : "trees=100, maxDepth=16",
+    "options" : [ "-P", "100", "-I", "100", "-num-slots", "1", "-K", "0", "-M", "1.0", "-V", "0.001", "-S", "5010", "-depth", "16" ],
+    "validationSceneMacroF1" : 0.9418766318616424,
+    "fitMillis" : 1257.6023
+  }, {
+    "setting" : "trees=100, maxDepth=0",
+    "options" : [ "-P", "100", "-I", "100", "-num-slots", "1", "-K", "0", "-M", "1.0", "-V", "0.001", "-S", "5010" ],
+    "validationSceneMacroF1" : 0.9418766318616424,
+    "fitMillis" : 1199.7933
+  } ]
+}

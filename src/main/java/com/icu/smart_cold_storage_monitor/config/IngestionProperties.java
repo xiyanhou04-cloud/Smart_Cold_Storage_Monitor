@@ -10,11 +10,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *                               characters). When blank, a random secret is generated for each run, which only the
  *                               built-in simulator knows.
  * @param clearReadingsOnStartup empty the {@code readings} table on every start
- *                               ({@code APP_READINGS_CLEAR_ON_STARTUP}, default true)
+ *                               ({@code APP_READINGS_CLEAR_ON_STARTUP}, default false)
  */
 @ConfigurationProperties(prefix = "app.ingestion")
 public record IngestionProperties(@DefaultValue("") String deviceSecret,
-                                  @DefaultValue("true") boolean clearReadingsOnStartup) {
+                                  @DefaultValue("false") boolean clearReadingsOnStartup) {
 
     @Override
     public String toString() {

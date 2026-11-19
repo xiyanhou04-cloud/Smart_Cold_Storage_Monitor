@@ -23,6 +23,12 @@ public final class SqlTimestamps {
         return FORMAT.format(instant);
     }
 
+    /** Both ends of a half-open range round up when stored readings lie on a millisecond grid. */
+    static String formatRangeBound(Instant instant) {
+        int subMillis = instant.getNano() % 1_000_000;
+        return format(subMillis == 0 ? instant : instant.plusNanos(1_000_000 - subMillis));
+    }
+
     public static Instant parse(String text) {
         return Instant.parse(text);
     }
