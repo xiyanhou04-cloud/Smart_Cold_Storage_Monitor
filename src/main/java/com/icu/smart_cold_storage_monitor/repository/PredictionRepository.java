@@ -42,8 +42,9 @@ public class PredictionRepository {
                 """).update();
     }
 
-    public void insert(long readingId, Estimate estimate, Instant predictedAt, String snapshot) {
-        jdbc.sql("""
+    /** Returns false when the reading already had a prediction, which is then kept as it is. */
+    public boolean insert(long readingId, Estimate estimate, Instant predictedAt, String snapshot) {
+        return jdbc.sql("""
                 INSERT INTO predictions (reading_id, risk_level, source, model_or_rule_version,
                                          predicted_at, feature_snapshot, quality_flag)
                 VALUES (:id, :level, :source, :version, :at, :snapshot, :quality)
@@ -51,7 +52,7 @@ public class PredictionRepository {
                 """).param("id", readingId).param("level", estimate.level().name())
                 .param("source", estimate.source().name()).param("version", estimate.version())
                 .param("at", SqlTimestamps.format(predictedAt)).param("snapshot", snapshot)
-                .param("quality", estimate.quality().name()).update();
+                .param("quality", estimate.quality().name()).update() == 1;
     }
 
     public boolean exists(long readingId) {

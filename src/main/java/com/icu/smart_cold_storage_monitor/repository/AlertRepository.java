@@ -65,6 +65,59 @@ public class AlertRepository {
                 .list();
     }
 
+    /** The session's active risk alerts: at most one per severity. */
+    public List<Alert> findActiveRiskAlerts(long sessionId) {
+        return jdbc.sql("SELECT " + COLUMNS + """
+                         FROM alerts
+                        WHERE session_id = :sessionId AND kind = 'RISK' AND resolved_at IS NULL
+                        ORDER BY id
+                        """)
+                .param("sessionId", sessionId)
+                .query(AlertRepository::mapRow)
+                .list();
+    }
+
+    /**
+     * Values of a new risk alert, taken from the prediction that opens it.
+     *
+     * @param description the system's explanation, 1 to 1000 characters, or {@code null}
+     */
+    public record NewRiskAlert(long sessionId, String deviceId, RiskLevel severity, AlertSource source,
+                               String modelOrRuleVersion, String qualityFlag, Instant measuredAt,
+                               String description) {
+    }
+
+    public Alert insertRiskAlert(NewRiskAlert alert) {
+        return jdbc.sql("""
+                        INSERT INTO alerts (session_id, device_id, kind, severity, source, description, opened_at,
+                                            last_seen_at, model_or_rule_version, quality_flag)
+                        VALUES (:sessionId, :deviceId, 'RISK', :severity, :source, :description, :measuredAt,
+                                :measuredAt, :version, :quality)
+                        RETURNING\s""" + COLUMNS)
+                .param("sessionId", alert.sessionId())
+                .param("deviceId", alert.deviceId())
+                .param("severity", alert.severity().name())
+                .param("source", alert.source().name())
+                .param("description", alert.description())
+                .param("measuredAt", SqlTimestamps.format(alert.measuredAt()))
+                .param("version", alert.modelOrRuleVersion())
+                .param("quality", alert.qualityFlag())
+                .query(AlertRepository::mapRow)
+                .single();
+    }
+
+    /** Records a further prediction of an active risk alert's severity. */
+    public Alert updateRiskEvidence(long id, Instant measuredAt) {
+        return jdbc.sql("""
+                        UPDATE alerts SET last_seen_at = :measuredAt
+                        WHERE id = :id AND kind = 'RISK' AND resolved_at IS NULL
+                        RETURNING\s""" + COLUMNS)
+                .param("id", id)
+                .param("measuredAt", SqlTimestamps.format(measuredAt))
+                .query(AlertRepository::mapRow)
+                .single();
+    }
+
     /**
      * Values of a new threshold alert; its opening value is also its last and peak value.
      *

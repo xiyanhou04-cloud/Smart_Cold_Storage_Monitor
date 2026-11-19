@@ -191,18 +191,24 @@ CREATE INDEX IF NOT EXISTS idx_prediction_jobs_due ON prediction_jobs (terminal,
 --     crossed limit of that version) and the opening/last/peak values are required. peak_value is the
 --     value furthest beyond the limit (highest for ABOVE, lowest for BELOW).
 --   kind RISK: a risk level of MEDIUM or above from the risk predictor (source MODEL or RULES), written
---     after the reading commits; one active alert per session. model_or_rule_version is required.
+--     with the prediction, after the reading commits. Predictions of one severity for the same session
+--     belong to one alert while each follows the previous one within the aggregation window
+--     (app.risk.alert-window, 5 minutes); one active alert per session and severity, so a MEDIUM and a
+--     HIGH episode can be active at the same time. model_or_rule_version and quality_flag are those of
+--     the opening prediction.
 -- Which severity a kind gets is application logic, not a CHECK, so it can change without rebuilding
 -- the table (SQLite cannot alter a CHECK). opened_at and last_seen_at are measured times of the
 -- readings that opened and last confirmed the episode; resolved_at is the measured time of the reading
--- that ended it. resolve_reason: RECOVERED (back in range / risk LOW), SUPERSEDED (replaced by a new
+-- that ended it. resolve_reason: RECOVERED (back in range / no prediction of the risk alert's severity
+-- for longer than the aggregation window), SUPERSEDED (replaced by a new
 -- alert of the same kind, e.g. a jump from below to above), SESSION_ENDED.
 -- Two kinds of text: description is written by the code that raises the alert, once, when it opens
 -- (threshold: what was crossed; risk: the model's or rules' explanation), for both kinds and never by
 -- a user; note is the acknowledging user's note (FR-06). description was added after the table was
 -- first released, so it is the last column and also listed in setup/SchemaUpgradeOnStartup.
--- Deliberately no foreign key to readings or predictions: those rows are cleared on startup by default
--- (ReadingRetentionService), while alerts and their acknowledgment audit trail must stay. The values
+-- Deliberately no foreign key to readings or predictions: those rows can be cleared on startup
+-- (APP_READINGS_CLEAR_ON_STARTUP, ReadingRetentionService), while alerts and their acknowledgment audit
+-- trail must stay. The values
 -- the alert needs are copied in. The composite foreign keys keep the session on the device and the
 -- threshold version on the session.
 -- ---------------------------------------------------------------------------------------------
@@ -255,7 +261,9 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_one_active_threshold
     ON alerts (session_id, metric) WHERE kind = 'THRESHOLD' AND resolved_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_one_active_risk
-    ON alerts (session_id) WHERE kind = 'RISK' AND resolved_at IS NULL;
+-- Replaces the original one-active-risk-alert-per-session index on existing databases.
+DROP INDEX IF EXISTS idx_alerts_one_active_risk;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_one_active_risk_per_severity
+    ON alerts (session_id, severity) WHERE kind = 'RISK' AND resolved_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_alerts_session_time ON alerts (session_id, opened_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_opened_at ON alerts (opened_at);

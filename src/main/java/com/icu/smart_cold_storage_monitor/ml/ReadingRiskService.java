@@ -5,6 +5,7 @@ import com.icu.smart_cold_storage_monitor.model.ThresholdLimits;
 import com.icu.smart_cold_storage_monitor.repository.PredictionRepository;
 import com.icu.smart_cold_storage_monitor.repository.StorageSessionRepository;
 import com.icu.smart_cold_storage_monitor.repository.ThresholdSettingRepository;
+import com.icu.smart_cold_storage_monitor.service.RiskAlertService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -12,6 +13,8 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -27,10 +30,15 @@ public class ReadingRiskService {
     private final ObjectMapper mapper;
     private final Clock clock;
     private final RiskMonitoringRuns monitoringRuns;
+    private final RiskAlertService riskAlerts;
+    private final TransactionTemplate transaction;
 
     public ReadingRiskService(PredictionRepository predictions, StorageSessionRepository sessions,
                               ThresholdSettingRepository thresholds, WekaRiskPredictor predictor,
-                              RulesRiskPredictor rules, ObjectMapper mapper, Clock clock, RiskMonitoringRuns monitoringRuns) {
+                              RulesRiskPredictor rules, ObjectMapper mapper, Clock clock, RiskMonitoringRuns monitoringRuns,
+                              RiskAlertService riskAlerts, PlatformTransactionManager transactionManager) {
+        this.riskAlerts = riskAlerts;
+        this.transaction = new TransactionTemplate(transactionManager);
         this.predictions = predictions;
         this.sessions = sessions;
         this.thresholds = thresholds;
@@ -88,8 +96,15 @@ public class ReadingRiskService {
             return;
         }
         var estimate = predictor.predict(snapshot, currentLimits);
-        var saved = new SavedFeatures(snapshot, reading.thresholdId(), rules.configuration());
-        predictions.insert(reading.id(), estimate, clock.instant(), mapper.writeValueAsString(saved));
+        var features = snapshot;
+        String saved = mapper.writeValueAsString(new SavedFeatures(snapshot, reading.thresholdId(), rules.configuration()));
+        // The prediction and its risk alert transition commit together; a retried job finds the prediction and
+        // leaves the alerts alone.
+        transaction.executeWithoutResult(status -> {
+            if (predictions.insert(reading.id(), estimate, clock.instant(), saved)) {
+                riskAlerts.evaluate(reading, estimate, features);
+            }
+        });
     }
 
     private static boolean usableCheckpoint(SavedFeatures saved, Reading reading, Instant startedAt, String product) {

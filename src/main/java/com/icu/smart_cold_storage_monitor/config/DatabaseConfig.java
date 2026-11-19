@@ -50,6 +50,8 @@ public class DatabaseConfig {
         hikari.setMinimumIdle(1);
         // Fail fast if the pool is exhausted rather than queueing requests for the default 30 s.
         hikari.setConnectionTimeout(Math.max(properties.busyTimeoutMs() * 2L, 1_000L));
+        // A connection whose BEGIN IMMEDIATE timed out is left believing it is in a transaction; never reuse it.
+        hikari.setExceptionOverride(new SqliteLockContentionOverride());
         return new HikariDataSource(hikari);
     }
 

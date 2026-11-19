@@ -21,6 +21,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.sqlite.SQLiteException;
 
 /** Committed database jobs are authoritative. Events only wake the bounded drain. */
 @Component
@@ -128,7 +129,7 @@ public class RiskPredictionWorker implements ApplicationRunner {
                     int attempts = Math.min(job.failedAttempts(), 30) + 1;
                     long delayMs = Math.min(30_000, 1_000L << Math.min(attempts - 1, 5));
                     String code = terminal ? "INVALID_READING_HISTORY"
-                            : ex instanceof CannotAcquireLockException ? "SQLITE_BUSY" : "PREDICTION_RETRY";
+                            : lockContention(ex) ? "SQLITE_BUSY" : "PREDICTION_RETRY";
                     predictions.recordFailure(job.reading().id(), attempts, System.currentTimeMillis() + delayMs,
                             terminal, code);
                     log.warn("Prediction job {} failed ({}, attempt {}).", job.reading().id(), code, attempts, ex);
@@ -137,5 +138,23 @@ public class RiskPredictionWorker implements ApplicationRunner {
         } catch (RuntimeException ex) {
             log.warn("Prediction sweep could not finish; durable work will be retried.", ex);
         }
+    }
+
+    /**
+     * SQLite's write lock was taken. A failed statement reports {@link CannotAcquireLockException}; a transaction
+     * that cannot begin ({@code BEGIN IMMEDIATE}) reports Spring's {@code CannotCreateTransactionException} with the
+     * driver's BUSY or LOCKED error as its cause.
+     */
+    static boolean lockContention(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof CannotAcquireLockException) {
+                return true;
+            }
+            if (cause instanceof SQLiteException sqlite) {
+                String code = sqlite.getResultCode().name();
+                return code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED");
+            }
+        }
+        return false;
     }
 }

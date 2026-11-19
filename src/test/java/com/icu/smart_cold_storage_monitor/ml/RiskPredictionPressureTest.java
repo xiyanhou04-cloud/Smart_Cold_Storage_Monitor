@@ -86,6 +86,7 @@ class RiskPredictionPressureTest {
                 assertThat(count(jdbc, "prediction_jobs")).isEqualTo(committed);
                 assertThat(count(jdbc, "predictions")).isZero();
                 assertThat(count(jdbc, "alerts")).isOne();
+                assertThat(thresholdAlerts(jdbc)).isOne();
                 recoveringAt = System.nanoTime();
                 thread.get().interrupt();
                 assertThat(interrupted.await(5, TimeUnit.SECONDS)).isTrue();
@@ -102,7 +103,10 @@ class RiskPredictionPressureTest {
             assertThat(count(jdbc, "prediction_jobs")).isZero();
             assertThat(jdbc.sql("SELECT count(*) - count(DISTINCT reading_id) FROM predictions")
                     .query(Long.class).single()).isZero();
-            assertThat(count(jdbc, "alerts")).isOne();
+            // 600 out-of-range readings within 30 s: one threshold alert and at most one risk alert per severity.
+            assertThat(thresholdAlerts(jdbc)).isOne();
+            assertThat(count(jdbc, "alerts WHERE kind = 'RISK'")).isEqualTo(raisedSeverities(jdbc));
+            assertThat(duplicateRiskAlerts(jdbc)).isZero();
             System.out.printf("R2 saturation: queueFilled=%d submitted=%d predictions=600 pending=0 duplicates=0 "
                     + "ingestFailures=0 inputMs=%d recoveryMs=%d%n", fill, committed, inputMillis, recoveryMillis);
         }
@@ -157,7 +161,9 @@ class RiskPredictionPressureTest {
                     """).param(id).query(Boolean.class).single());
             await().atMost(Duration.ofSeconds(5)).until(() -> count(jdbc, "predictions") == 1);
             assertThat(count(jdbc, "prediction_jobs")).isZero();
-            assertThat(count(jdbc, "alerts")).isOne();
+            // The retried job opens the risk alert once, in the transaction that stores its prediction.
+            assertThat(thresholdAlerts(jdbc)).isOne();
+            assertThat(count(jdbc, "alerts WHERE kind = 'RISK'")).isEqualTo(raisedSeverities(jdbc));
             System.out.printf("R2 SQLite busy: submitted=1 predictions=1 pending=0 duplicates=0 "
                     + "recoveredBusyJobs=1 elapsedMs=%d%n", elapsedMillis(lockAt));
         }
@@ -287,6 +293,22 @@ class RiskPredictionPressureTest {
 
     private static long count(JdbcClient jdbc, String table) {
         return jdbc.sql("SELECT count(*) FROM " + table).query(Long.class).single();
+    }
+
+    private static long thresholdAlerts(JdbcClient jdbc) {
+        return jdbc.sql("SELECT count(*) FROM alerts WHERE kind = 'THRESHOLD'").query(Long.class).single();
+    }
+
+    /** MEDIUM/HIGH levels among the predictions: within one aggregation window, one risk alert each. */
+    private static long raisedSeverities(JdbcClient jdbc) {
+        return jdbc.sql("SELECT count(DISTINCT risk_level) FROM predictions WHERE risk_level <> 'LOW'")
+                .query(Long.class).single();
+    }
+
+    /** Risk alerts of the same severity that a retry or a repeated wake-up would have duplicated. */
+    private static long duplicateRiskAlerts(JdbcClient jdbc) {
+        return jdbc.sql("SELECT count(*) - count(DISTINCT session_id || severity) FROM alerts WHERE kind = 'RISK'")
+                .query(Long.class).single();
     }
 
     private static long elapsedMillis(long started) {

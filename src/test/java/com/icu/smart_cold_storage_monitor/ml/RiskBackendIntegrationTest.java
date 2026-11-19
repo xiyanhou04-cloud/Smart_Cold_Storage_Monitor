@@ -156,6 +156,72 @@ class RiskBackendIntegrationTest extends SqliteIntegrationTest {
         assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE kind='THRESHOLD'").query(Long.class).single()).isOne();
     }
 
+    @Test
+    void mediumAndHighPredictionsBecomeAggregatedRiskAlerts() throws Exception {
+        var session = devices.ensureDeviceWithActiveSession("risk-device", "test sensor", "RAW-MEAT", "RAW-MEAT");
+        long last = 0;
+        // Readings may be at most 60 s ahead of server time, and the session starts now.
+        for (int second = 0; second <= 55; second += 5) {
+            last = ingest(session.id(), session.startedAt().plusSeconds(second), 9);
+        }
+        awaitPrediction(last);
+
+        // Within one window every raised severity is one alert, last seen at its latest prediction.
+        var expected = jdbc.sql("""
+                SELECT p.risk_level || ' ' || p.source || ' ' || min(r.measured_at) || ' ' || max(r.measured_at)
+                FROM predictions p JOIN readings r ON r.id = p.reading_id
+                WHERE p.risk_level <> 'LOW'
+                  AND p.quality_flag NOT IN ('INCOMPLETE_HISTORY', 'MONITORING_INTERRUPTED',
+                                             'MONITORING_INTERRUPTION_UNKNOWN')
+                GROUP BY p.risk_level ORDER BY min(r.measured_at)""").query(String.class).list();
+        assertThat(expected).isNotEmpty();
+        assertThat(jdbc.sql("""
+                SELECT severity || ' ' || source || ' ' || opened_at || ' ' || last_seen_at FROM alerts
+                WHERE kind = 'RISK' AND resolved_at IS NULL ORDER BY opened_at""").query(String.class).list())
+                .isEqualTo(expected);
+        assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE kind = 'THRESHOLD'").query(Long.class).single()).isOne();
+
+        mvc.perform(get("/api/alerts").param("kind", "RISK").with(user("operator").roles("OPERATOR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(expected.size()))
+                .andExpect(jsonPath("$.items[0].kind").value("RISK"))
+                .andExpect(jsonPath("$.items[0].state").value("ACTIVE"))
+                .andExpect(jsonPath("$.items[0].risk.modelOrRuleVersion").isString())
+                .andExpect(jsonPath("$.items[0].description").isString());
+    }
+
+    @Test
+    void aFailedRiskAlertWriteLeavesThePredictionPendingUntilItSucceeds() throws Exception {
+        var session = devices.ensureDeviceWithActiveSession("risk-device", "test sensor", "RAW-MEAT", "RAW-MEAT");
+        jdbc.sql("""
+                CREATE TRIGGER fail_risk_alert BEFORE INSERT ON alerts WHEN NEW.kind = 'RISK'
+                BEGIN SELECT RAISE(ABORT, 'risk alert unavailable'); END
+                """).update();
+        long readings = 0;
+        try {
+            for (int second = 0; second <= 55; second += 5) {
+                ingest(session.id(), session.startedAt().plusSeconds(second), 9);
+                readings++;
+            }
+            await().atMost(Duration.ofSeconds(5)).until(() -> jdbc.sql(
+                    "SELECT count(*) FROM prediction_jobs WHERE failed_attempts > 0").query(Long.class).single() > 0);
+            // A prediction that would raise an alert rolled back with it, so its job stays and is retried.
+            assertThat(jdbc.sql("""
+                    SELECT count(*) FROM prediction_jobs j JOIN predictions p ON p.reading_id = j.reading_id
+                    """).query(Long.class).single()).isZero();
+            assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE kind = 'RISK'").query(Long.class).single()).isZero();
+        } finally {
+            jdbc.sql("DROP TRIGGER fail_risk_alert").update();
+        }
+        long total = readings;
+        await().atMost(Duration.ofSeconds(15)).until(() -> jdbc.sql("SELECT count(*) FROM predictions")
+                .query(Long.class).single() == total);
+        assertThat(jdbc.sql("SELECT count(*) FROM prediction_jobs").query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT count(*) FROM alerts WHERE kind = 'RISK'").query(Long.class).single()).isPositive();
+        assertThat(jdbc.sql("SELECT count(*) - count(DISTINCT severity) FROM alerts WHERE kind = 'RISK'")
+                .query(Long.class).single()).isZero();
+    }
+
     private long ingest(long session, Instant at, double temperature) {
         return ingestion.ingest("risk-device", new ReadingSubmission("risk-device", session, at, temperature, 70))
                 .reading().id();

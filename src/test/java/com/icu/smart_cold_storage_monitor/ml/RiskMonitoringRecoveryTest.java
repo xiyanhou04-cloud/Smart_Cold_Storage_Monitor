@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.icu.smart_cold_storage_monitor.SmartColdStorageMonitorApplication;
 import com.icu.smart_cold_storage_monitor.controller.ReadingQueryController;
+import com.icu.smart_cold_storage_monitor.repository.SqlTimestamps;
 import com.icu.smart_cold_storage_monitor.service.DeviceSessionService;
 import com.icu.smart_cold_storage_monitor.service.ReadingIngestionService;
 import com.icu.smart_cold_storage_monitor.service.ReadingIngestionService.ReadingSubmission;
@@ -144,8 +145,15 @@ class RiskMonitoringRecoveryTest {
             assertExposure(app, secondGap, 5, 750);
             assertLatest(app, "RULES", "INCOMPLETE_HISTORY", true, "RUNNING_DATA_GAP", "RUNNING_DATA_GAP");
             assertSingleThresholdAlert(app);
-            assertThat(jdbc(app).sql("SELECT count(*) FROM alerts WHERE resolved_at IS NULL")
+            assertThat(jdbc(app).sql("SELECT count(*) FROM alerts WHERE kind = 'THRESHOLD' AND resolved_at IS NULL")
                     .query(Long.class).single()).isOne();
+            // The gap predictions at 700 s and 750 s are rules fallbacks: only the model's MEDIUM at 705 s is
+            // an active risk alert.
+            assertThat(jdbc(app).sql("""
+                    SELECT severity || ' ' || source || ' ' || opened_at || ' ' || last_seen_at FROM alerts
+                    WHERE kind = 'RISK' AND resolved_at IS NULL""").query(String.class).list())
+                    .containsExactly("MEDIUM MODEL " + SqlTimestamps.format(START.plusSeconds(705)) + " "
+                            + SqlTimestamps.format(START.plusSeconds(705)));
         }
     }
 
@@ -250,8 +258,9 @@ class RiskMonitoringRecoveryTest {
     }
 
     private static void assertSingleThresholdAlert(ConfigurableApplicationContext app) {
-        assertThat(jdbc(app).sql("SELECT kind FROM alerts ORDER BY id").query(String.class).list())
-                .containsExactly("THRESHOLD");
+        // Risk alerts are written alongside; this checks that the threshold alert is never repeated.
+        assertThat(jdbc(app).sql("SELECT kind FROM alerts WHERE kind = 'THRESHOLD' ORDER BY id")
+                .query(String.class).list()).containsExactly("THRESHOLD");
     }
 
     private static JdbcClient jdbc(ConfigurableApplicationContext app) {

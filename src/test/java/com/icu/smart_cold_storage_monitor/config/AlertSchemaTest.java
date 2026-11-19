@@ -5,10 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.icu.smart_cold_storage_monitor.support.SqliteIntegrationTest;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 /** Constraints of the {@code alerts} table shared by threshold (FR-04) and risk (FR-05) alerts. */
 class AlertSchemaTest extends SqliteIntegrationTest {
@@ -18,6 +22,8 @@ class AlertSchemaTest extends SqliteIntegrationTest {
     static final String T0 = "2026-11-12T08:00:00.000Z";
     static final String T1 = "2026-11-12T08:00:05.000Z";
     static final String T2 = "2026-11-12T08:00:10.000Z";
+
+    @Autowired DataSource dataSource;
 
     long session;
     long otherSession;
@@ -60,14 +66,32 @@ class AlertSchemaTest extends SqliteIntegrationTest {
     }
 
     @Test
-    void oneActiveRiskAlertPerSessionAlongsideThresholdAlerts() {
+    void oneActiveRiskAlertPerSessionAndSeverityAlongsideThresholdAlerts() {
         thresholdAlert(session, DEVICE, threshold, "TEMPERATURE");
         long first = riskAlert(session, DEVICE);
 
         assertThatThrownBy(() -> riskAlert(session, DEVICE)).isInstanceOf(DuplicateKeyException.class);
+        assertThatCode(() -> riskAlert(session, DEVICE, "HIGH")).doesNotThrowAnyException();
+        assertThatCode(() -> riskAlert(otherSession, OTHER_DEVICE)).doesNotThrowAnyException();
 
-        resolve(first, T2, "SUPERSEDED");
+        resolve(first, T2, "RECOVERED");
         assertThatCode(() -> riskAlert(session, DEVICE)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void startupReplacesTheOriginalOneActiveRiskAlertPerSessionIndex() {
+        jdbc.sql("""
+                CREATE UNIQUE INDEX idx_alerts_one_active_risk
+                    ON alerts (session_id) WHERE kind = 'RISK' AND resolved_at IS NULL""").update();
+
+        new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(dataSource);
+
+        assertThat(jdbc.sql("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'alerts'")
+                .query(String.class).list())
+                .contains("idx_alerts_one_active_risk_per_severity")
+                .doesNotContain("idx_alerts_one_active_risk");
+        riskAlert(session, DEVICE);
+        assertThatCode(() -> riskAlert(session, DEVICE, "HIGH")).doesNotThrowAnyException();
     }
 
     @Test
@@ -216,11 +240,15 @@ class AlertSchemaTest extends SqliteIntegrationTest {
     }
 
     private long riskAlert(long sessionId, String device) {
+        return riskAlert(sessionId, device, "MEDIUM");
+    }
+
+    private long riskAlert(long sessionId, String device, String severity) {
         return jdbc.sql("""
                 INSERT INTO alerts (session_id, device_id, kind, severity, source, opened_at, last_seen_at,
                                     model_or_rule_version)
-                VALUES (?, ?, 'RISK', 'MEDIUM', 'RULES', ?, ?, 'rules-1')
-                RETURNING id""").params(sessionId, device, T1, T1).query(Long.class).single();
+                VALUES (?, ?, 'RISK', ?, 'RULES', ?, ?, 'rules-1')
+                RETURNING id""").params(sessionId, device, severity, T1, T1).query(Long.class).single();
     }
 
     private void resolve(long id, String resolvedAt, String reason) {

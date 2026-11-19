@@ -59,6 +59,9 @@ app:
     medium-after-seconds: ${APP_RISK_MEDIUM_AFTER_SECONDS:120}
     high-after-seconds: ${APP_RISK_HIGH_AFTER_SECONDS:600}
     stale-after: ${APP_RISK_STALE_AFTER:PT30S}
+    # MEDIUM/HIGH predictions of one severity for the same session that each follow the previous one
+    # within this window belong to one RISK alert; the alert resolves once the window passes without one.
+    alert-window: ${APP_RISK_ALERT_WINDOW:PT5M}
   # Built-in sensor simulator: on startup it registers each device in the scenario file, makes sure
   # it has an active storage session, and then posts one reading per device every interval, forever,
   # stamped with the send time. APP_SIMULATOR_ENABLED=false stops only the sending loop: devices
