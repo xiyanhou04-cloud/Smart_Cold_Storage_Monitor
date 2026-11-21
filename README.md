@@ -1,387 +1,279 @@
 # Smart Cold Storage Monitor
 
-A Java 21 / Spring Boot backend that collects temperature and humidity readings from cold-storage zones, detects excursions and sensor faults, and keeps an audited, role-protected record of who did what. It is built for cold-storage operators, who need to see current conditions and excursions; for administrators, who manage user access and review audit records; and for instructors, who can reproduce the demonstration from this repository. It replaces manual spot checks, which can miss short or overnight temperature changes and leave an incomplete history.
-
-The project is the CS5010 team project of Team Intensive Care Unit. Risk estimates and alerts are classroom simulations, not food-safety or pharmaceutical-compliance decisions. The full requirements, API contract, and schema are in the Phase 1 design document (`doc/Smart_Cold_Storage_Monitor_Java_Design.md`, kept locally and not committed).
+Smart Cold Storage Monitor collects temperature and humidity readings from seven simulated cold-storage zones, shows current conditions and trends on a web dashboard, opens alerts when a zone leaves its limits, and estimates Low, Medium, or High storage risk with a Weka Random Forest (with a rule-based fallback). Every account change, threshold change, and alert acknowledgment is recorded in an audit trail that administrators can filter. The system is a Java 21 / Spring Boot backend with SQLite storage, a Java sensor simulator, and a React + TypeScript dashboard. It is built for cold-storage operators, who watch conditions and respond to alerts; for administrators, who manage accounts, limits, and audit review; and for instructors, who can reproduce the whole demonstration on a laptop from this repository. It is the CS5010 team project of Team Intensive Care Unit. Risk estimates and alerts are classroom simulations, not food-safety or pharmaceutical-compliance decisions.
 
 ## Team
 
 | Member | GitHub Username | Role |
 |---|---|---|
-| Xiyan Hou | [@XiyanHou-NEU](https://github.com/XiyanHou-NEU) | Backend foundation: SQLite persistence, authentication and sessions, account management, audit logging and review, API documentation |
-| Qizhen Dong | [@AnoiExceptional](https://github.com/AnoiExceptional) | Sensor monitoring: inventory assessment, device telemetry ingestion, zone alerts, recorded-data replay, test fixtures and Python test clients |
-| Tianyi Yin | [@Gaviid](https://github.com/Gaviid) | Model training: dataset preparation, Weka training and evaluation, risk-prediction model (planned for Phase 3) |
-| Alexander Li | [@ByAlexanderL](https://github.com/ByAlexanderL) | Frontend: React and TypeScript dashboard (planned for Phase 3) |
+| Xiyan Hou | [@XiyanHou-NEU](https://github.com/XiyanHou-NEU) | Backend: persistence, authentication, accounts, audit, reading ingestion, thresholds, alerts, risk alerts, history APIs, API docs |
+| Qizhen Dong | [@AnoiExceptional](https://github.com/AnoiExceptional) | Sensor data: Java sensor simulator, zone-monitoring prototype (zone assessment, telemetry ingestion, zone alerts, recorded-data replay), sensor recordings and fixtures, Python test clients |
+| Tianyi Yin | [@Gaviid](https://github.com/Gaviid) | Machine learning: scenario generation, Weka training and evaluation, risk prediction in the backend |
+| Alexander Li | [@ByAlexanderL](https://github.com/ByAlexanderL) | Frontend: React and TypeScript dashboard |
 
 ## Repository Structure
 
-The backend is one Spring Boot application with a layered package structure, as described in the Phase 1 design: controllers map requests, services own business rules and transactions, and repositories own all SQL.
+The backend is one Spring Boot application with a layered package structure: controllers map requests, services own business rules and transactions, and repositories own all SQL.
 
 ```
 Smart_Cold_Storage_Monitor/
-  pom.xml, mvnw, mvnw.cmd          Maven build and Maven Wrapper (pinned Java 21 / Spring Boot 4.1.2)
+  pom.xml, mvnw, mvnw.cmd          Maven build and Maven Wrapper (Java 21, Spring Boot 4.1.2, Weka 3.8.6)
   src/main/java/com/icu/smart_cold_storage_monitor/
     controller/ (+ dto/)           REST controllers and request/response DTOs: auth, users, audit review,
-                                   device reading ingestion
-    service/ (+ exception/)        Business rules: accounts, audit, first-run admin, paging, reading ingestion,
-                                   device/session provisioning; typed exceptions
-    repository/                    All SQL (Spring JDBC, parameterized): users, audit events, devices, storage
-                                   sessions, readings, timestamp format
+                                   readings (ingestion, query, latest), thresholds, alerts, predictions
+    service/ (+ exception/)        Business rules and transactions: accounts, audit, first-run admin, paging,
+                                   ingestion, device/session provisioning, thresholds, threshold and risk alerts,
+                                   acknowledgment, history queries; typed exceptions
+    repository/                    All SQL (Spring JDBC, parameterized): users, audit events, devices, sessions,
+                                   thresholds, readings, predictions, alerts; timestamp format
     model/                         Records and enums that mirror the tables
     security/                      Principals, user lookup, JSON login/logout/error handlers, session registry,
                                    device credential check and filter
-    config/                        SQLite DataSource, security filter chains (browser, device ingestion), OpenAPI
-    setup/                         Startup runners: first administrator; built-in sensor simulator
+    config/                        SQLite DataSource, security filter chains (browser, device), OpenAPI,
+                                   threshold defaults
+    setup/                         Startup runners: first administrator, schema upgrade, threshold backfill,
+                                   optional reading reset, built-in sensor simulator
     web/                           Error body, request-ID filter, global exception handler
-    monitoring/                    Zone monitoring: inventory assessment, SHT45 decoding, live telemetry
-                                   ingestion, 5-second alert worker, accelerated replay
-    simulator/                     Java reading simulator (plain Java: command line and the replay the
+    ml/                            Risk features, Weka and rules predictors, prediction worker, monitoring-run
+                                   markers, offline scenario generation and training entry points
+    simulator/                     Java reading simulator (plain Java: command line, and the replay the
                                    backend starts on its own)
+    monitoring/                    Zone-monitoring prototype (separate path, Spring profiles only)
   src/main/resources/
-    application.yaml               Defaults (localhost only, database path, ingestion, simulator, monitoring)
-    application-monitoring-*.yaml  Profiles: demo (5 zones), seven-zone replay, live (7 zones + ingestion)
-    schema.sql                     Idempotent schema applied on every start (users, audit_events,
-                                   devices, storage_sessions, threshold_settings,
-                                   threshold_change_requests, readings, alerts)
+    application.yaml               Defaults (localhost only, database, simulator, thresholds, risk model)
+    application-monitoring-*.yaml  Prototype profiles: demo (5 zones), seven-zone replay, live ingestion
+    schema.sql                     Idempotent schema applied on every start
+    risk-model/                    Shipped Random Forest model, Weka header, and metadata
+    static/                        Target of the frontend's build:backend (served by Spring Boot)
   src/test/java/...                JUnit 5 / Spring Boot Test / MockMvc tests, mirroring the main packages
+  frontend/                        React + TypeScript dashboard (Vite, Vitest); see frontend/README.md
   testData/
-    SevenZone_Demo/                Seven-zone inventory SQLite, 2,527 recorded sensor samples (JSONL),
-                                   Python HTTP test clients
+    SevenZone_Demo/                Seven-zone inventory SQLite, 2,527 recorded sensor samples, Python HTTP clients
     ColdStorage_Demo/, SHT45_30min/  Five-zone inventory and the original 30-minute sensor recording
-  docs/                            Monitoring architecture, live telemetry contract, zoning design
-  doc/                             Phase 1 design and course material (git-ignored, local only)
+    ML_Scenarios/                  Configuration for the synthetic training scenarios
+  docs/                            ML training report, monitoring prototype architecture and telemetry interface,
+                                   storage-zone notes
   data/                            Runtime SQLite databases (git-ignored, created on first run) and the
                                    simulator's scenario file monitoring_timestamped.jsonl (committed)
 ```
 
 ## Setup and Run
 
-**Prerequisites:** JDK 21 or newer (on machines where `java` on the PATH is older, set `JAVA_HOME` to a JDK 21 install); Python 3 with only the standard library (for the HTTP test clients). No Node.js, cloud account, or API key is required. Maven is provided by the wrapper.
+**Prerequisites**
+
+- JDK 21 or newer. Maven is provided by the wrapper. If `java` on the PATH is older, set `JAVA_HOME` to a JDK 21 install first.
+- Node.js 20 or newer, for the dashboard.
+- Optional: Python 3 (standard library only) for the HTTP test clients of the monitoring prototype.
+
+No cloud account, API key, or physical sensor is needed.
+
+**Install and test**
 
 ```powershell
-# Clone
 git clone https://github.com/xiyanhou04-cloud/Smart_Cold_Storage_Monitor.git
 cd Smart_Cold_Storage_Monitor
-
-# Run tests (dependencies are downloaded on first run)
-.\mvnw.cmd test
-
-# Run the application with live telemetry ingestion and zone alerts (http://127.0.0.1:8080)
-$env:APP_TELEMETRY_DEVICE_SECRET = 'local-seven-zone-demo-key'
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=monitoring-live"
+.\mvnw.cmd test                  # backend tests; dependencies download on the first run
+cd frontend
+npm install
+npm test                         # frontend tests
+cd ..
 ```
 
-In bash use `./mvnw` and `export APP_TELEMETRY_DEVICE_SECRET=local-seven-zone-demo-key`. Without a profile (`.\mvnw.cmd spring-boot:run`), the account, authentication, and audit features run, plus design-conformant reading ingestion (`POST /api/readings`) fed by the built-in sensor simulator (see below). An executable JAR is built with `.\mvnw.cmd package`.
+In bash, use `./mvnw` instead of `.\mvnw.cmd`. If `./mvnw` reports "permission denied" (the execute bit is lost in a zip download), run `chmod +x mvnw`.
 
-**First sign-in.** On first run, if no administrator exists, one is created with username `admin` and the default password `12345678`; the console prints a reminder to change it (`POST /api/users/{id}/password-reset`). Override with `APP_BOOTSTRAP_ADMIN_USERNAME` and `APP_BOOTSTRAP_ADMIN_PASSWORD`. The default is public, so change it for anything beyond a local demo.
+**Run the backend**
 
-**Configuration (environment variables):**
+```powershell
+.\mvnw.cmd spring-boot:run       # http://127.0.0.1:8080
+```
+
+On startup the backend creates `data/smart-cold-storage.db`, registers seven simulated devices (one per storage zone), starts a storage session for each with its zone's default limits, and its built-in simulator posts one reading per device every 5 seconds to its own `POST /api/readings`. Each reading is checked against the limits, and the risk model scores it shortly after. The log shows `Loaded storage risk model random-forest-ml2-v1` and `Sensor simulator started: 7 device(s) ...`. An executable JAR is built with `.\mvnw.cmd package`.
+
+**Run the dashboard**
+
+Option A, development server (backend running as above, in a second terminal):
+
+```powershell
+cd frontend
+npm run dev                      # http://localhost:5173, proxies /api to http://127.0.0.1:8080
+```
+
+Option B, served by Spring Boot from the same origin (the demonstration setup):
+
+```powershell
+cd frontend
+npm run build:backend            # writes the build into src/main/resources/static
+cd ..
+.\mvnw.cmd spring-boot:run       # dashboard at http://127.0.0.1:8080/
+```
+
+`npm run dev:mock` runs the dashboard against an in-memory mock API with no backend.
+
+**First sign-in.** If no administrator exists, the backend creates one with username `admin` and password `12345678` and prints a reminder to change it. The default is public, so change it (Users page, or `POST /api/users/{id}/password-reset`) for anything beyond a local demo, or set `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD` before the first start. Administrators create operator accounts on the Users page.
+
+**What to try.** The dashboard shows one card per zone with its latest values against its limits, a trend chart (5 minutes to 6 hours), and stale-data warnings. The recorded scenario contains excursions, so threshold and risk alerts open and resolve on their own; acknowledge one on the Alerts page. Sign in as an operator and request a limit change on the Thresholds page, then approve it as the administrator. The Audit page (administrators only) shows the matching events. The API is documented at <http://127.0.0.1:8080/swagger-ui.html>.
+
+**Configuration (environment variables)**
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `APP_TELEMETRY_DEVICE_SECRET` | Secret used to derive device ingestion tokens (`monitoring-live` profile) | none, required for ingestion |
-| `APP_DEVICE_SECRET` | Device secret for `POST /api/readings` tokens, shared by the backend and an external simulator (`--mode=http`); at least 16 characters | backend: random per run (only the built-in simulator can post); simulator http mode: required |
-| `APP_SIMULATOR_ENABLED` | Run the built-in sensor simulator loop | `true` |
-| `APP_READINGS_CLEAR_ON_STARTUP` | Empty the `readings` table on every start (devices, sessions, and audit events are kept) | `true` |
-| `APP_DATABASE_PATH` | Accounts, audit, devices, storage sessions, and readings SQLite file | `./data/smart-cold-storage.db` |
-| `SERVER_PORT` | HTTP port | `8080` |
+| `APP_DATABASE_PATH` | SQLite file for all application data | `./data/smart-cold-storage.db` |
+| `SERVER_PORT` | HTTP port (the server binds to `127.0.0.1` only) | `8080` |
 | `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD` | First-run administrator | `admin` / `12345678` |
+| `APP_DEVICE_SECRET` | Secret for device tokens on `POST /api/readings`, at least 16 characters; must match an external simulator's | random per run (only the built-in simulator can post) |
+| `APP_SIMULATOR_ENABLED` | Run the built-in simulator loop (devices and sessions are provisioned either way) | `true` |
+| `APP_READINGS_CLEAR_ON_STARTUP` | Empty readings and their predictions at startup (devices, sessions, thresholds, alerts, and audit events are kept) | `false` |
+| `APP_RISK_MODEL_BASE` | Model location (`classpath:` or `file:`); `classpath:/risk-model/absent` demonstrates the rules fallback | `classpath:/risk-model/random-forest` |
+| `APP_RISK_STALE_AFTER` | Age after which the latest reading is reported as stale | `PT30S` |
+| `APP_RISK_ALERT_WINDOW` | Window for aggregating risk predictions into one alert | `PT5M` |
 | `APP_API_DOCS_ENABLED` | Serve `/v3/api-docs` and Swagger UI | `true` |
+| `BACKEND_URL` (frontend dev server) | Proxy target for `/api` | `http://127.0.0.1:8080` |
 
-Real secrets are never committed. The server binds to `127.0.0.1` only. To reset local data, stop the app and delete the files under `data/`. Normal startup keeps all data except sensor readings, which are cleared on every start by default (see below). A database file created by an older build is upgraded in place on startup: columns added to an existing table since then (currently `devices.location_code`, the humidity limits of `threshold_settings`, and `alerts.description`) are added, and existing rows are kept.
+Real secrets are never committed. To reset local data, stop the app and delete `data/smart-cold-storage.db` (and its `-wal` / `-shm` files). A database created by an older build is upgraded in place on startup.
 
-### Run the core use case end to end
+### API overview
 
-With the backend running as above, open a second terminal at the repository root.
-
-```powershell
-$env:APP_TELEMETRY_DEVICE_SECRET = 'local-seven-zone-demo-key'   # same value as the backend
-python -B .\testData\SevenZone_Demo\test_live_telemetry.py
-```
-
-When prompted for the backend password, enter the administrator password (`12345678` on a fresh database), or set `TELEMETRY_TEST_PASSWORD` to skip the prompt. The run takes about 35 seconds and exercises the full flow: seven simulated devices post authenticated readings, the backend stores them, the 5-second worker evaluates each zone, and the script reads the alerts back over the signed-in API. It asserts 56 persisted readings, all eight alert types (each opened and closed exactly once), device-credential rejection, duplicate handling, and conflicting-retry rejection.
-
-For an accelerated replay of the recorded 30-minute feed (2,527 samples), run `python -B .\testData\SevenZone_Demo\test_recorded_live_replay.py` and enter a speed such as `100` (about 18 seconds).
-
-### Sensor reading ingestion and the built-in simulator
-
-As soon as the backend is running (no profile needed, nobody has to sign in), it collects sensor readings into the `readings` table of `data/smart-cold-storage.db`:
-
-1. **Provisioning.** On startup, every device in `data/monitoring_timestamped.jsonl` (seven) is registered in `devices` with its storage zone in `location_code` (e.g. `RAW-MEAT`; an existing device keeps its name and location, and only an empty location is filled in), and each gets an active storage session (product type = its zone, e.g. `RAW-MEAT`) unless it already has one. A new session writes a `STORAGE_SESSION_STARTED` audit event with no actor. On later startups the existing sessions are reused.
-2. **Replay loop.** A background thread replays the recorded samples (see the Java simulator below), one reading per device every 5 seconds, wrapping to the first sample after the last, forever. Each reading is stamped with its actual send time and posted over HTTP to the server's own `POST /api/readings` with that device's credential, the same path an external device uses. After a restart the scenario starts from its first sample again, into an empty `readings` table (next point).
-3. **Ingestion.** `POST /api/readings` accepts only `Authorization: Device <deviceId>:<token>` (token = hex HMAC-SHA256 of the device id under `APP_DEVICE_SECRET`) for a registered, enabled device. It is stateless and needs no CSRF token; a browser session cookie is ignored (401). Valid readings are stored in one short transaction:
-
-| Situation | Response |
-|---|---|
-| New reading | 201 with the stored reading |
-| Same device and timestamp, same values (a retry) | 200 with the stored reading, nothing added |
-| Same device and timestamp, different values | 409 `READING_CONFLICT` |
-| Timestamp not after the device's latest reading | 409 `OUT_OF_ORDER` |
-| Session ended | 409 `SESSION_NOT_ACTIVE` |
-| Session unknown or of another device | 404 |
-| Body `deviceId` differs from the credential | 403 (audited as `ACCESS_DENIED`) |
-| Missing field, humidity outside 0 to 100, temperature outside -40 to 125 °C, NaN, timestamp more than 60 s ahead or before the session start | 400 |
-| Missing or invalid credential, unknown or disabled device | 401 `INVALID_DEVICE_CREDENTIAL` |
-
-Rejected readings change nothing. Timestamps are stored to the millisecond. Each accepted reading records the threshold version that was current for its session. The startup log shows `Sensor simulator started: 7 device(s) ...`. Enable the simulator package's DEBUG logging to see accepted readings. The table grows by about 120,000 rows per day of uptime. Readings and predictions are retained across restarts by default. `APP_READINGS_CLEAR_ON_STARTUP=true` opts into deleting both tables' readings and predictions at startup while retaining devices, sessions, thresholds and audit events. `APP_SIMULATOR_ENABLED=false` stops the loop while still provisioning devices and sessions for external input.
-
-### Query readings for the dashboard (FR-03)
-
-`GET /api/readings/query` returns stored readings grouped by device for trend charts. Any signed-in user (OPERATOR or ADMIN) may call it; without a session it returns 401. All parameters are optional:
-
-| Parameter | Meaning | Default |
-|---|---|---|
-| `deviceId` | Device id; repeat or comma-separate for several (at most 50). An unknown id is a 400. | every registered device |
-| `metric` | `temperature` and/or `humidity`; repeat or comma-separate | both |
-| `window` | Length of the range ending at `to`, e.g. `PT10M` or `10m`; not together with `from` | 5 minutes |
-| `from` / `to` | UTC instants; `from` inclusive, `to` exclusive | `to` = now, `from` = `to` − `window` |
-
-The range may span at most 6 hours. The top level of the response is keyed by device id (in id order); each device has `temperatureC` and/or `humidityPct`, each a list of `{timestamp, value}` points, oldest first. A metric that was not requested is omitted; a requested device without readings in the range has empty lists.
-
-```json
-{
-  "ESP32-SIM-001": {
-    "temperatureC": [{"timestamp": "2026-11-13T07:27:32.849Z", "value": 4.0032}],
-    "humidityPct":  [{"timestamp": "2026-11-13T07:27:32.849Z", "value": 69.99565}]
-  },
-  "ESP32-SIM-005": {"temperatureC": [], "humidityPct": []}
-}
-```
-
-Example: `GET /api/readings/query?deviceId=ESP32-SIM-001,ESP32-SIM-005&metric=humidity&window=10m`. Because readings are cleared on startup by default, only data since the last start is available.
-
-### Threshold settings (FR-04)
-
-Each device has a lower and upper temperature limit (°C) and a lower and upper humidity limit (%RH). A reading equal to a limit is in range. The limits belong to the device's active storage session and are versioned: every change inserts a new `threshold_settings` row, and each reading records the version it was accepted under, so a change applies only to later readings. Readings outside these limits open threshold alerts (next section).
-
-- **Defaults.** A new storage session starts with the default for its device's `location_code`, configured under `app.thresholds` in `application.yaml`. The seven zones use the targets of the seven-zone demo inventory (for example RAW-MEAT 0 to 4 °C and 55 to 80 %RH, FROZEN -25 to -18 °C and 35 to 80 %RH); any other location gets the fallback (0 to 8 °C, 30 to 95 %RH). Limits set for an earlier session are not carried over to a new one. On startup, active sessions without limits (from an older database) get their default.
-- **Setting limits.** `PUT /api/settings/thresholds/{deviceId}` with `temperatureLowerC`, `temperatureUpperC`, `humidityLowerPct`, `humidityUpperPct` (all required; temperature -40 to 125, humidity 0 to 100, each lower below its upper). An administrator's change applies at once (200 `APPLIED`). An operator's change becomes a request (202 `PENDING_APPROVAL`) and the limits stay as they are until an administrator approves it. Sending the current limits writes nothing (200 `UNCHANGED`).
-- **Requests.** A device has at most one pending request. A new request from the same operator replaces their pending one; anyone else gets 409 `THRESHOLD_REQUEST_PENDING`. Administrators approve (`POST /api/settings/threshold-requests/{id}/approval`) or reject (`.../rejection`) with an optional note of up to 500 characters; the requester can cancel (`.../cancellation`). An administrator's direct change or a new storage session supersedes the pending request. Approval returns 409 `THRESHOLD_REQUEST_STALE` if the device's limits changed after the request was made. `GET /api/settings/threshold-requests` (paged, filter by `deviceId` and `status`) shows administrators every request and operators their own.
-- **Table data.** `GET /api/settings/thresholds` returns one row per device with its session, current limits, `source` (`DEFAULT` or `CUSTOM`), who changed them, and the pending request.
-- **Audit.** `THRESHOLD_CHANGED` (old and new limits) for every user change, and `THRESHOLD_CHANGE_REQUESTED`, `_APPROVED`, `_REJECTED`, `_CANCELLED` for requests, written in the same transaction as the change.
-
-### Threshold alerts (FR-04)
-
-Every accepted reading is checked against the threshold version it recorded, in the same transaction that stores it, and the result is kept in the `alerts` table of `data/smart-cold-storage.db`. Temperature and humidity are checked separately; a value equal to a limit is in range.
-
-- **Open.** A value below the lower or above the upper limit, with no active alert for that metric, opens one: kind `THRESHOLD`, severity `HIGH` (an out-of-range value counts as high risk), source `THRESHOLD`, with the crossed limit, the opening threshold version, the value, and a description such as `Temperature 4.6 °C is above the upper limit of 4.0 °C.`
-- **Update.** Further readings beyond the same limit update that alert: `last_seen_at`, the last value, and the peak value (highest above the upper limit, lowest below the lower limit).
-- **Resolve.** The next in-range reading resolves it (`RECOVERED`). A jump straight from below the lower to above the upper limit (or back) resolves it as `SUPERSEDED` and opens a new alert for the new direction.
-- Times are the measured times of the readings. An identical retry or a rejected reading changes no alert, and a threshold change applies from the next reading on. Alerts are kept when readings are cleared on startup.
-
-The table is shared with risk alerts (below). Each opened and resolved alert is logged at INFO (`Alert 12 opened: TEMPERATURE ABOVE limit 4.0 (4.6) on device ESP32-SIM-001`). The recorded scenario contains excursions, so the built-in simulator opens and resolves alerts on its own.
-
-### Risk alerts (FR-05)
-
-The risk predictor scores every reading, every 5 seconds per device, so its MEDIUM and HIGH results are aggregated before they reach the `alerts` table. The alert is written in the same transaction as the prediction that causes it.
-
-- **One alert per run of predictions.** For one device (storage session) and one severity, a MEDIUM or HIGH prediction that comes at most 5 minutes after the previous prediction of that severity extends the active alert (`last_seen_at`). Otherwise it opens a new alert: kind `RISK`, severity of the prediction, source `MODEL` or `RULES`, with the opening prediction's model or rule version, quality flag, and a description such as `The risk model rated the storage risk MEDIUM: temperature 4.6 °C, 30 s observed above the upper temperature limit.` LOW predictions in between do not split the alert.
-- **MEDIUM and HIGH are separate alerts.** Each follows its own 5-minute window, so both can be active at the same time.
-- **Resolve.** An active risk alert resolves (`RECOVERED`) at the first prediction of its session, of any level, that comes more than 5 minutes after the alert's last prediction. A device that stops reporting keeps its alert active, as threshold alerts do.
-- **Gaps do not alert.** Rules results that only reflect missing readings (quality `INCOMPLETE_HISTORY`, `MONITORING_INTERRUPTED`, `MONITORING_INTERRUPTION_UNKNOWN`) never open or extend a risk alert. Rules results for an unavailable model (`MODEL_MISSING`, `MODEL_INCOMPATIBLE`, `MODEL_ERROR`, `UNKNOWN_PRODUCT`) do.
-- Times are the measured times of the readings. The window is `APP_RISK_ALERT_WINDOW` (default `PT5M`). If the alert write fails, the prediction is rolled back with it and retried. Risk alerts are listed and acknowledged like threshold alerts (`GET /api/alerts?kind=RISK`).
-
-### Prediction history (FR-05)
-
-`GET /api/predictions` lists the stored predictions for any signed-in user, most recently measured reading first, paged like alert history (`page`, `size`, default 50, max 200). Filters, all optional:
-
-- `deviceId`: one or more devices, repeated (`?deviceId=A&deviceId=B`) or comma-separated (`?deviceId=A,B`). An unknown device matches nothing.
-- `riskLevel`: one or more of `LOW`, `MEDIUM`, `HIGH`, repeated or comma-separated. Any other value is a 400.
-- `from` (inclusive) and `to` (exclusive): UTC instants on the measured time of the scored reading; `to` must be after `from`.
-
-Each item has `id, readingId, deviceId, sessionId, measuredAt, temperatureC, humidityPct, thresholdId, riskLevel, source, modelOrRuleVersion, predictedAt, qualityFlag`, `features` (`observedAboveUpperSeconds, elapsedStorageSeconds, productType`), and the gap fields `historicalExposureIncomplete, currentGapReason, lastGapReason` (null where an older snapshot lacks them). Example: `GET /api/predictions?deviceId=ESP32-SIM-001,ESP32-SIM-005&riskLevel=MEDIUM,HIGH&from=2026-11-18T00:00:00Z`.
-
-### Alert history and acknowledgment (FR-06, FR-08)
-
-Any signed-in user (OPERATOR or ADMIN) can list and acknowledge alerts:
-
-- `GET /api/alerts`: paged (`page`, `size`, default 50, max 200), most recently opened first. Filters, all optional: `deviceId` and `kind` (repeat or comma-separate), `state` (`ACTIVE` or `RESOLVED`), `acknowledged` (`true`/`false`), `from` (inclusive) and `to` (exclusive) on the opening time. `GET /api/alerts/{id}` returns one alert.
-- Every alert has the same format: `id, deviceId, sessionId, kind, severity, source, description, state, openedAt, lastSeenAt, resolvedAt, resolveReason`, then `threshold` (`metric, direction, unit, limit, openingValue, lastValue, peakValue, thresholdId`) for a threshold alert or `risk` for a risk alert, and `acknowledgment` (`userId, username, at, note`, or `null`). Two texts are kept apart: `description` is written by the system when the alert opens (for threshold alerts, what was crossed; for risk alerts, the opening prediction's level, temperature, and observed exposure) and never changes, while `acknowledgment.note` is the user's.
-- `POST /api/alerts/{id}/acknowledgment` (CSRF token required) with an optional body `{"note": "..."}` (at most 500 characters; stripped, blank means no note) records the signed-in user and the server time. It does not resolve the alert: an active alert keeps being updated and resolves when the readings recover. Resolved alerts can be acknowledged too. The response is `{outcome, alert}`. The first acknowledgment is final: a repeat, by anyone and with any note, returns the existing one with outcome `ALREADY_ACKNOWLEDGED`.
-- **Audit (FR-07).** The first acknowledgment writes an `ALERT_ACKNOWLEDGED` event (actor, time, result `SUCCESS`, target `ALERT` and the alert id, details with the device, kind, severity, metric, whether the alert was still active, and the note length) in the same transaction; if the audit write fails, the acknowledgment is rolled back. A repeat writes no event. A request without a CSRF token is refused with 403 and audited as `ACCESS_DENIED`. Administrators find the events with `GET /api/audit-events?eventType=ALERT_ACKNOWLEDGED`.
-
-### Run the Java reading simulator from the command line
-
-The simulator replays the seven-zone recording in `data/monitoring_timestamped.jsonl` (a copy of `testData/SevenZone_Demo/monitoring_timestamped.jsonl`, 361 samples per device). Each tick sends one reading per device; after a device's last sample it wraps to the first. Every reading carries the **actual send time** (UTC, milliseconds), not the recorded `measured_at`, so readings from consecutive loops always move forward in time. It is a scenario replay, not live sensing.
-
-```powershell
-# Dry run (default): print the JSON that would be posted, one line per device per tick
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.main-class=com.icu.smart_cold_storage_monitor.simulator.SimulatorMain" "-Dspring-boot.run.arguments=--devices=ESP32-SIM-001 --interval=5"
-
-# Post to the running backend. Start the backend with the same APP_DEVICE_SECRET and
-# APP_SIMULATOR_ENABLED=false (two loops on the same device would reject each other as OUT_OF_ORDER).
-# The backend logs the session id of each device at startup.
-$env:APP_DEVICE_SECRET = 'local-simulator-device-key'
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.main-class=com.icu.smart_cold_storage_monitor.simulator.SimulatorMain" "-Dspring-boot.run.arguments=--mode=http --sessions=ESP32-SIM-001=1 --devices=ESP32-SIM-001"
-```
-
-| Option | Meaning | Default |
-|---|---|---|
-| `--mode=dry-run\|http` | Print the JSON, or POST it | `dry-run` |
-| `--data=PATH` | Scenario JSONL | `data/monitoring_timestamped.jsonl` |
-| `--url=URL` | Reading endpoint | `http://127.0.0.1:8080/api/readings` |
-| `--devices=ID,...` | Devices to replay | every device in the file (7) |
-| `--sessions=ID=N,...` | Storage session id per device; required for each device in http mode | none |
-| `--interval=SECONDS` | Seconds between ticks, 1 to 30 | `5` |
-| `--cycles=N` | Passes through the scenario, `0` = forever | `0` |
-
-The request body follows the design's reading contract, `{deviceId, sessionId, timestamp, temperatureC, humidityPct}`, with header `Authorization: Device <deviceId>:<token>`, where the token is the hex HMAC-SHA256 of the device id under `APP_DEVICE_SECRET` (at least 16 characters; read only from the environment). A retry after a network error, timeout, or 5xx resends the identical body, timestamp included (up to 3 attempts, then the sample is dropped). 400/409 are logged and the loop continues; 404 stops that device; 401/403 stop the run. Late ticks are skipped rather than sent in a burst. Ctrl+C prints a per-device summary. On startup the file is checked: each line must match its SHT45 frame, and each device's samples must be gap-free at the recorded 5-second step.
-
-To try the account and audit features, open Swagger UI at <http://127.0.0.1:8080/swagger-ui.html>, or use the endpoints below. Sign in with `GET /api/auth/csrf`, then `POST /api/auth/login` (form fields `username`, `password`, header `X-CSRF-TOKEN`).
+Browser clients sign in with `GET /api/auth/csrf`, then `POST /api/auth/login` (form fields `username`, `password`, header `X-CSRF-TOKEN`). Every state-changing browser request needs the CSRF token. Errors return `code`, `message`, `fieldErrors` (when relevant), and a request ID. History endpoints are paged (`page`, `size`, default 50, max 200).
 
 | Endpoint | Access | Purpose |
 |---|---|---|
-| `GET /api/auth/csrf`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | public / signed in | Session login with CSRF protection |
+| `GET /api/auth/csrf`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | public / signed in | Session login and logout with CSRF protection |
 | `GET/POST /api/users`, `POST /api/users/{id}/password-reset`, `POST /api/users/{id}/deactivation` | ADMIN | Account management |
-| `GET /api/audit-events` | ADMIN | Audit review, filter by time, actor, event type, result; paged |
-| `POST /api/readings` | device credential | Ingest one reading (`Authorization: Device <deviceId>:<token>`); no session or CSRF |
-| `GET /api/readings/query` | signed in | Readings grouped by device, temperature and humidity as separate lists; filter by device, metric, time range |
-| `GET /api/readings/latest` | signed in | Latest reading, freshness, and its risk estimate per device. Optional `deviceId` filter |
+| `GET /api/audit-events` | ADMIN | Audit review, filtered by time, actor, event type, and result |
+| `POST /api/readings` | device credential | Ingest one reading (`Authorization: Device <deviceId>:<token>`, no cookie or CSRF) |
+| `GET /api/readings/query` | signed in | Readings grouped by device for charts; filter by device, metric, time range (up to 6 hours) |
+| `GET /api/readings/latest` | signed in | Latest reading per device, whether it is stale, and its risk prediction |
+| `GET /api/predictions` | signed in | Risk prediction history; filter by device, risk level, and measured time |
 | `GET /api/settings/thresholds`, `GET/PUT /api/settings/thresholds/{deviceId}` | signed in | Current limits per device; set limits (ADMIN applies, OPERATOR requests) |
-| `GET /api/settings/threshold-requests`, `POST /api/settings/threshold-requests/{id}/cancellation` | signed in | Change requests (operators see their own); cancel your own pending request |
+| `GET /api/settings/threshold-requests`, `POST .../{id}/cancellation` | signed in | Limit change requests (operators see their own); cancel your own |
 | `POST /api/settings/threshold-requests/{id}/approval`, `.../rejection` | ADMIN | Review a pending change request |
-| `GET /api/predictions` | signed in | Risk prediction history with the scored reading and model inputs; filter by device and risk level (both repeat or comma-separate) and measured time; paged |
-| `GET /api/alerts`, `GET /api/alerts/{id}` | signed in | Alert history (filter by device, kind, state, acknowledgment, opening time; paged) and one alert |
-| `POST /api/alerts/{id}/acknowledgment` | signed in | Acknowledge an alert with an optional note (audited) |
-| `POST /api/telemetry/readings` | device token | Ingest one reading (`X-Device-Id`, `X-Device-Token`); `monitoring-live` only |
-| `GET /api/telemetry/samples`, `GET /api/monitoring/alerts`, `GET /api/monitoring/alert-events` | signed in | Stored samples, current/closed zone alerts, ordered alert events |
-| `GET /api/monitoring/assessments`, `GET /api/monitoring/replay/assessments` | signed in | Per-lot condition assessment (live and as-of replay) |
-| `GET /api/monitoring/recorded-alert-replay?speed=` | signed in | Streamed accelerated replay of the recorded feed |
+| `GET /api/alerts`, `GET /api/alerts/{id}` | signed in | Alert history (filter by device, kind, state, acknowledgment, opening time) and one alert |
+| `POST /api/alerts/{id}/acknowledgment` | signed in | Acknowledge an alert with an optional note (up to 500 characters) |
 
-More detail: [live telemetry and alert interfaces](docs/LIVE_TELEMETRY_AND_ALERTS.md), [monitoring architecture](docs/MONITORING_ARCHITECTURE.md), [storage zone integration](docs/STORAGE_ZONE_INTEGRATION.md).
+**Reading ingestion.** A reading is `{deviceId, sessionId, timestamp, temperatureC, humidityPct}`; the token is the hex HMAC-SHA256 of the device id under `APP_DEVICE_SECRET`. A new reading returns 201; an identical retry returns 200 with the stored reading and adds nothing; the same device and time with different values returns 409 `READING_CONFLICT`; a time not after the device's latest reading returns 409 `OUT_OF_ORDER`; an ended session returns 409 `SESSION_NOT_ACTIVE`; invalid values (humidity outside 0 to 100, temperature outside -40 to 125 °C, a timestamp more than 60 s ahead) return 400; a bad credential returns 401. Rejected readings change nothing.
 
-## Progress So Far
+**Thresholds.** Each device has lower and upper temperature (°C) and humidity (%RH) limits, versioned per storage session; a value equal to a limit is in range. A new session starts from its zone's default (`app.thresholds` in `application.yaml`). An administrator's change applies at once; an operator's change becomes a request that an administrator approves or rejects. A change applies only to later readings.
 
-| Functional Requirement (from Phase 1) | Status | Notes |
-|---|---|---|
-| FR-01 User login and logout | Complete | Session login/logout, BCrypt, CSRF, roles (OPERATOR, ADMIN), session expiry on password reset or deactivation, first-run admin. Admins create, reset, and deactivate accounts. |
-| FR-02 Sensor data ingestion | Mostly complete | Design-conformant `POST /api/readings`: device credential only (no cookie, CSRF-exempt), deviceId must match the credential, active session required, humidity 0 to 100, finite values, timestamp at most 60 s ahead, 201 new / 200 identical retry / 409 conflict or out of order, stored in `readings` with `UNIQUE(device_id, measured_at)`. On startup the backend provisions the seven devices with active storage sessions and its built-in Java simulator posts the recorded samples to this endpoint every 5 seconds with send-time timestamps, with nobody signed in. Each reading records its session's current threshold version. Not yet: admin storage-session API (`POST /api/storage-sessions`), alert transitions in the ingestion transaction (FR-04). The prototype's `POST /api/telemetry/readings` (`monitoring-live` profile) is unchanged. |
-| FR-03 Dashboard | Partial (backend) | `GET /api/readings/query` provides chart-ready series and `GET /api/readings/latest` provides reading freshness and risk per device. The frontend and per-session selection are future work. |
-| FR-04 Threshold alerts | Mostly complete | Threshold settings are complete: temperature and humidity limits per device, versioned per storage session, location defaults, administrator changes applied at once and operator changes approved by an administrator (`/api/settings/thresholds`, `/api/settings/threshold-requests`), recorded on each reading. Threshold alerts are opened, updated, and resolved in the reading's transaction and stored in the `alerts` table (severity HIGH, one active alert per session and metric). Alerts are listed with `GET /api/alerts`. Not yet: closing alerts when a storage session ends (no session-end API yet). Separately, the `monitoring` prototype has eight zone alert types evaluated every 5 seconds against limits from the inventory database. |
-| FR-05 Risk prediction | Backend complete | The bundled ML-2 Random Forest estimates simulated risk after a reading commits. The versioned rules handle incompatible inputs or failures, and startup recovers pending predictions. MEDIUM and HIGH predictions become `RISK` alerts, aggregated per device and severity over 5 minutes (see Risk alerts above). `GET /api/predictions` returns the prediction history, filtered by devices, risk levels, and time range. The frontend lists risk alerts with the other alerts and counts an active one toward a zone's EXCURSION status, but does not show per-reading predictions yet. See the local risk demonstration below. |
-| FR-06 Alert acknowledgment | Complete | `POST /api/alerts/{id}/acknowledgment` for operators and administrators: records the user, the server time, and an optional note of up to 500 characters without resolving the alert; works on resolved alerts too; a repeated acknowledgment returns the first one. Audited in the same transaction. |
-| FR-07 Audit logging | Partial | Login success/failure, logout, access denied, user created, password reset, user deactivated, storage session started (by the system at startup), threshold changed (old and new limits), threshold change requested/approved/rejected/cancelled, alert acknowledged (only the first acknowledgment of an alert; rolled back with it if the audit write fails), written with actor, time, result, target. Admin storage-session events wait on that feature. |
-| FR-08 History and audit review | Partial | Admin audit review with filters and paging is complete. Paged alert history `GET /api/alerts` with device, kind, state, acknowledgment, and time filters. The design's paged `GET /api/readings` is not built (the dashboard query `GET /api/readings/query` covers up to 6 hours). The prototype's alert history (`state=CLOSED/ALL`, alert events) and stored samples remain under the `monitoring-live` profile. |
+**Alerts.** Threshold alerts are opened, updated, and resolved in the same transaction that stores the reading: one active alert per session and metric, updated while the excursion continues, resolved by the next in-range reading. Risk alerts come from MEDIUM and HIGH predictions, aggregated per device and severity over a 5-minute window so a prediction every 5 seconds does not flood the list. Acknowledgment records the user, time, and note without resolving the alert; a repeated acknowledgment returns the first one.
 
-**Working end to end:** Start the backend with no profile and readings from seven simulated devices land in `data/smart-cold-storage.db` every 5 seconds through `POST /api/readings`. Or start the backend with the `monitoring-live` profile. Seven simulated devices post readings with per-device tokens. The backend validates and stores them in a separate telemetry SQLite file (`data/live-telemetry.sqlite`), and the scheduled worker opens and closes zone alerts. A signed-in user reads the alerts and events back over the API. Independently, an administrator can sign in, create operator accounts, reset or deactivate them, and review the resulting audit trail. Both flows run from the commands above.
+### Command-line Java simulator
 
-## Testing So Far
+The simulator replays the seven-zone recording in `data/monitoring_timestamped.jsonl` and stamps each reading with its send time. It can run on its own, for example as an external device. Dry run (the default) prints the JSON it would send:
 
-- JUnit 5, Spring Boot Test, and MockMvc. Integration tests use temporary SQLite files (never another engine). Coverage: database configuration (foreign keys, WAL, transactions), login/logout/CSRF/session behavior, role enforcement, account management, audit writing and review filters, paging, first-run admin creation, OpenAPI document, the zone assessment engine, SHT45 decoding and replay, the monitoring API, the sensor data table constraints (unique device/time, one active session per device, session and threshold ownership, value and timestamp checks, device location), upgrading an older database file in place, the Java simulator (scenario loading and checks, looping and send-time stamps, retries with the identical payload, HTTP sending against a stub server, options), and reading ingestion (every status in the ingestion table, device credentials, cookie rejection, no CSRF or session, session provisioning and its audit event, the built-in simulator storing readings on a real server port, and the command-line simulator posting to a real server, and clearing readings on startup), and the dashboard reading query (sign-in for both roles, defaults, device and metric filters, window and from/to ranges with inclusive start and exclusive end, invalid ranges, unknown devices), and threshold settings (limit validation, location defaults and the fallback, reset on a new session, startup backfill, administrator changes, operator requests with approval, rejection, cancellation, replacement, supersede and stale checks, role and CSRF enforcement, audit events, readings recording their version), and threshold alerts (the `alerts` table constraints, opening at HIGH, updating last and peak values, recovery, a jump across the range, independent temperature and humidity alerts, retries and rejected readings, threshold changes, sessions without limits, surviving the startup reading cleanup, and refusal outside the reading transaction), and alert acknowledgment and history (user, time, and note recorded without resolving, one audit event in the same transaction, idempotent repeats by any user, resolved alerts, note stripping and the 500-character limit, unknown alerts, deactivated users, rollback when the audit write fails, the shared response format, sign-in and CSRF enforcement with the ACCESS_DENIED event, audit review of the event, history order, filters, and paging).
-- 362 tests across 48 test classes; all passed on 2026-11-18 (`.\mvnw.cmd test`, 0 failures, 0 errors, 0 skipped).
-- The Python clients under `testData/SevenZone_Demo/` are HTTP-level checks against a running backend and are not part of `mvnw test`.
-- ML-3 tests cover model validation and fallback, versioned thresholds, outages, independent threshold alerts, and prediction recovery after restarting the application with the same SQLite file.
-- Risk alert tests cover the 5-minute aggregation (boundary, LOW predictions in between, resolution after the window), separate MEDIUM and HIGH alerts, gap fallbacks that never alert, rules fallbacks for a missing model, late predictions, per-device alerts, the alert API, the rollback of a prediction whose alert write fails, replacing the old one-risk-alert-per-session index, and a pooled connection whose `BEGIN IMMEDIATE` timed out.
-- Prediction history tests cover sign-in, order and fields, several devices and risk levels (repeated and comma-separated), unknown devices, the inclusive/exclusive time range, combined filters, paging, and invalid parameters; the OpenAPI test covers `/api/predictions` and `/api/readings/latest`.
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.main-class=com.icu.smart_cold_storage_monitor.simulator.SimulatorMain" "-Dspring-boot.run.arguments=--devices=ESP32-SIM-001 --interval=5"
+```
 
-## Next Steps (Phase 3)
+To post to a backend, start the backend with the same `APP_DEVICE_SECRET` and with `APP_SIMULATOR_ENABLED=false` (two loops on one device reject each other as out of order), then add `--mode=http --sessions=ESP32-SIM-001=1` (the backend logs each device's session id at startup). `--help` lists all options.
 
-- Add the admin storage-session API (`POST /api/storage-sessions`, end), which resolves or blocks active alerts, with its audit events in the same transaction. Decide with the team whether the prototype's `POST /api/telemetry/readings` is retired.
-- Build the React and TypeScript dashboard (2-second polling, trend chart, alerts, stale-data indication) served by Spring Boot; add the paged readings history API.
-- Add the paged `GET /api/readings` and measure receipt-to-display latency against the 5-second target.
+### Risk model: training and demonstration
 
-### Reproduce the ML-2 training run
-
-From the repository root with Java 21, generate the artificial scenarios and
-train both Weka candidates in a fresh output directory.
+Training is a separate command and never runs inside the backend. To reproduce the shipped model, generate the 70 synthetic scenarios and train both Weka candidates into a new output directory:
 
 ```powershell
 .\mvnw.cmd -B compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java "-Dexec.mainClass=com.icu.smart_cold_storage_monitor.ml.RiskScenarioGenerationMain"
-.\mvnw.cmd -B compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java "-Dexec.mainClass=com.icu.smart_cold_storage_monitor.ml.ExpandedRiskTrainingMain" "-Dexec.args=target/ml-scenarios target/ml-risk-expanded-reproduction"
+.\mvnw.cmd -B compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java "-Dexec.mainClass=com.icu.smart_cold_storage_monitor.ml.ExpandedRiskTrainingMain" "-Dexec.args=target/ml-scenarios target/ml-risk-reproduction"
 ```
 
-Choose a new reproduction output directory for each run. It contains the
-split, evaluation, both models, Weka headers and metadata. The backend loads
-the reviewed `random-forest-ml2-v1` bundle from
-`src/main/resources/risk-model/` by default. That bundle is included in
-the application JAR, so teammates can run the demo directly after a checkout
-and build. See the [ML report](docs/ML_TRAINING_REPORT.md#ml-2-expanded-data-experiment)
-for settings and results.
+On the held-out test scenarios, the selected Random Forest (60 trees, depth 8) reached 0.98 accuracy and 0.98 Macro-F1, with High-class recall 1.00; logistic regression reached 0.94 and 0.93. The labels come from the risk rules, so the models learn a simulated risk policy rather than measured spoilage. Settings, the split, confusion matrices, and timings are in the [ML training report](docs/ML_TRAINING_REPORT.md).
 
-### Local risk prediction demonstration
+At runtime, `GET /api/readings/latest` returns each device's latest prediction: `riskLevel`, `source` (`MODEL` or `RULES`), `modelOrRuleVersion`, `predictedAt`, and `qualityFlag`. To see the rules fallback, start with a fresh `APP_DATABASE_PATH` and `APP_RISK_MODEL_BASE=classpath:/risk-model/absent`: predictions then report `RULES` and `MODEL_MISSING` while threshold alerts continue. A reading that ends a gap of more than 30 seconds (including a restart) is also scored by the rules, at least MEDIUM, with a gap quality flag. Predictions that were still pending at shutdown are processed on the next start.
 
-Use Java 21. Start with a fresh demo database path so each device has a fresh session.
+When running the JAR from outside the repository, pass the simulator scenario explicitly: `java -jar Smart_Cold_Storage_Monitor.jar --app.simulator.data=C:/path/to/monitoring_timestamped.jsonl`. Without it, the backend starts and logs that the scenario could not be loaded.
+
+### Zone-monitoring prototype
+
+An earlier, separate monitoring path lives in the `monitoring` package and runs only with a Spring profile. It has its own telemetry endpoint (`POST /api/telemetry/readings`), its own SQLite file (`data/live-telemetry.sqlite`), a 5-second zone alert worker with eight alert types, per-lot assessments, and an accelerated replay of the recorded feed:
 
 ```powershell
-$env:APP_DATABASE_PATH = './data/risk-ml3-demo.db'
-$env:APP_READINGS_CLEAR_ON_STARTUP = 'false'
-.\mvnw.cmd spring-boot:run
+$env:APP_TELEMETRY_DEVICE_SECRET = 'local-seven-zone-demo-key'
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=monitoring-live"
+python -B .\testData\SevenZone_Demo\test_live_telemetry.py      # in a second terminal, same secret
 ```
 
-The default simulator sends one reading per device every five seconds. The
-startup log reports `Loaded storage risk model random-forest-ml2-v1`. Use a
-second PowerShell window to sign in and query a simulated device.
+The script signs in as the administrator, posts readings from seven devices, and checks that all eight alert types open and close once (about 35 seconds). See [live telemetry and alerts](docs/LIVE_TELEMETRY_AND_ALERTS.md) and [monitoring architecture](docs/MONITORING_ARCHITECTURE.md).
 
-```powershell
-$base = 'http://127.0.0.1:8080'
-$credentials = Get-Credential -UserName admin -Message 'Local demo application credentials'
-$csrf = Invoke-RestMethod "$base/api/auth/csrf" -SessionVariable browserSession
-$headers = @{}
-$headers[$csrf.headerName] = $csrf.token
-Invoke-RestMethod "$base/api/auth/login" -WebSession $browserSession -Method Post -Headers $headers -Body @{
-    username = $credentials.UserName
-    password = $credentials.GetNetworkCredential().Password
-}
-Invoke-RestMethod "$base/api/readings/latest?deviceId=ESP32-SIM-001" -WebSession $browserSession |
-    ConvertTo-Json -Depth 5
+## Feature Status
+
+| Functional Requirement (from Phase 1) | Status | Where to Find It |
+|---|---|---|
+| FR-01 User login and logout | Complete | Backend: `config/SecurityConfig`, `security/` (JSON login/logout handlers, session registry and expiry), `service/UserAccountService`, `service/InitialAdminService`, `controller/AuthController`, `controller/UserAdminController`. Frontend: `pages/LoginPage.tsx`, `auth/AuthContext.tsx`, `pages/UsersPage.tsx` |
+| FR-02 Sensor data ingestion | Complete | `controller/ReadingController`, `service/ReadingIngestionService`, `config/DeviceIngestionSecurityConfig`, `security/DeviceAuthenticationFilter`, `security/DeviceCredentialService`, `repository/ReadingRepository`; simulator in `simulator/` and `setup/SensorSimulatorRunner`. Storage sessions are started automatically at startup (see Known Issues) |
+| FR-03 Dashboard | Complete | Frontend `pages/DashboardPage.tsx` (2-second polling, zone cards, trend charts with the allowed band), `domain/status.ts` (stale and no-data states); backend `controller/ReadingQueryController`, `service/ReadingQueryService` (`GET /api/readings/query`, `GET /api/readings/latest`) |
+| FR-04 Threshold alerts | Complete | `service/ThresholdService`, `service/ThresholdAlertService`, `controller/ThresholdController`, `config/ThresholdProperties`, `repository/AlertRepository`; frontend `pages/ThresholdsPage.tsx`, `pages/AlertsPage.tsx` |
+| FR-05 Risk prediction | Partial | Backend complete: `ml/ReadingRiskService`, `ml/WekaRiskPredictor`, `ml/RulesRiskPredictor`, `ml/RiskPredictionWorker`, `service/RiskAlertService`, `controller/PredictionController`, model in `src/main/resources/risk-model/`. The dashboard lists risk alerts but does not yet show each zone's current risk level, calculation time, and source |
+| FR-06 Alert acknowledgment | Complete | `controller/AlertController`, `service/AlertAcknowledgmentService`; frontend `pages/AlertsPage.tsx` |
+| FR-07 Audit logging | Complete | `service/AuditService`, `repository/AuditEventRepository`, auth handlers in `security/`; events written in the same transaction by `UserAccountService`, `ThresholdService`, `AlertAcknowledgmentService`, `DeviceSessionService` |
+| FR-08 History | Complete | `GET /api/alerts` (`service/AlertQueryService`), `GET /api/readings/query`, `GET /api/predictions` (`service/PredictionQueryService`), `GET /api/audit-events` (`service/AuditReviewService`); frontend `pages/AlertsPage.tsx`, `pages/AuditPage.tsx`, dashboard trend range |
+
+## Scope and Design Changes Since Phase 1
+
+| Change | Reason |
+|---|---|
+| Seven devices (one per storage zone) instead of one monitored device; each device stores its zone in `devices.location_code` | The recorded sensor data covers seven zones with different products and limits, and a multi-zone dashboard is closer to a real cold room. |
+| The backend runs the simulator itself and provisions devices and storage sessions at startup; the admin storage-session API is not built yet | The demonstration works with one command and nobody signed in, and readings use the same authenticated endpoint as an external device. |
+| Humidity limits added next to temperature limits | Several zones (produce, eggs) are sensitive to humidity, and the recorded data includes it. |
+| Operators may request limit changes, which an administrator approves or rejects; administrators still apply changes directly | Operators notice problems first, while control stays with administrators; every step is audited. |
+| Zone default limits; a new storage session starts from its zone's default | Each zone needs different limits, and carrying limits over from a different product's session would be wrong. |
+| One `alerts` table for threshold and risk alerts, with one severity scale and one acknowledgment flow | Operators see and acknowledge every alert in one list. |
+| Risk alerts aggregate MEDIUM and HIGH predictions per device over 5 minutes | A prediction arrives every 5 seconds; one alert per prediction would flood the list. |
+| A data gap affects only the reading that ends it (rules fallback, at least MEDIUM); later readings use the model again and keep the gap as history | Treating the whole rest of the session as incomplete would switch the model off for good after a single restart. |
+| Added endpoints: `GET /api/readings/query`, `GET /api/predictions`, threshold change requests, password reset and deactivation; the paged readings list is replaced by the time-range query for now | The dashboard needs chart-ready series per device, and account management needs more than account creation. |
+| First administrator is created automatically on first start with a documented default password instead of a separate setup command | Simpler classroom setup; the console reminds the administrator to change it, and environment variables override it. |
+| Zone-monitoring prototype (`monitoring` package) kept as a separate path under Spring profiles | It was built in Phase 2 with its own data model; the team has not yet decided whether to merge it into the main path or retire it. |
+| OpenAPI / Swagger UI added | Lets teammates and graders try the API without a client. |
+
+## Design Patterns and Principles Applied
+
+| Pattern / Principle | Where | Why |
+|---|---|---|
+| Layered architecture (MVC on the server) | `controller` → `service` → `repository` | Controllers only map and validate requests, services own rules and transactions, repositories own SQL, so each layer is tested and changed separately. |
+| Repository | `repository/*Repository` (Spring `JdbcClient`, parameterized SQL) | Keeps all SQL in one place and out of business code; prevents SQL injection. |
+| Strategy with fallback | `ml/RiskPredictor`, `WekaRiskPredictor`, `RulesRiskPredictor` | The risk service calls one interface; a missing or incompatible model switches to the rules without changing callers. |
+| Strategy | `simulator/ReadingSender` (`ConsoleReadingSender`, `HttpReadingSender`) | The same replay loop prints JSON in dry-run mode or posts it over HTTP. |
+| Facade | `simulator/ScenarioReplay`; frontend `api/http.ts` `HttpClient` | The backend uses the plain-Java simulator through one class; frontend pages never call `fetch` directly (CSRF, JSON, and errors handled in one place). |
+| Observer (events) | `ReadingIngestionService` publishes `ReadingAccepted`; `RiskPredictionWorker` listens after commit; frontend `HttpClient.onUnauthorized` → `AuthProvider` | Prediction runs only after the reading is committed, so it can never roll back a reading; any 401 signs the UI out. |
+| Durable job queue (transactional outbox) | `prediction_jobs` filled by a trigger in the reading transaction (`PredictionRepository.installTriggers`), drained by `RiskPredictionWorker` | Every committed reading gets a prediction, even after a crash or restart. |
+| State machine | `service/ThresholdAlertService.evaluate`, `service/RiskAlertService` | Explicit open / update / resolve transitions keep one active alert per excursion. |
+| Chain of Responsibility | Spring Security filter chains in `SecurityConfig` and `DeviceIngestionSecurityConfig`, `DeviceAuthenticationFilter` | Browser sessions and device credentials are checked by separate chains; the CSRF exemption covers only the ingestion endpoint. |
+| Adapter / exception translation | `config/SqliteExceptionTranslator`, `web/GlobalExceptionHandler` | Maps SQLite driver errors (which carry no SQL state) to Spring exceptions, and every error to one `ApiError` body. |
+| Dependency injection | Constructor injection throughout; injected `Clock` (`DatabaseConfig.clock`); frontend `api/ApiContext.tsx` | Tests replace time, HTTP, and the backend (`FakeBackend`) without global state. |
+| Immutable data objects | Java records in `model` and `controller/dto` | Values cannot change after creation, and DTOs keep the API format separate from table rows. |
+| Least privilege and fail-safe defaults | Roles checked in services as well as URL rules; device credentials grant ingestion only; every other `/api/**` path requires sign-in | A missed URL rule or a stolen device token cannot reach admin functions. |
+
+## Testing
+
+- **Unit tests:** Backend: JUnit 5, 138 tests in 23 classes, covering threshold limit validation, paging, device credentials, the simulator (scenario loading and checks, looping, retries with the same payload, HTTP sending against a stub server, options), risk features and gap handling, Weka model loading and checks, the predictors, scenario generation and training, and the zone assessment engine. Frontend: Vitest, 31 unit tests for status and freshness rules, formatting, the HTTP client (CSRF, retry, 401 handling, errors), polling, and limit validation.
+- **Integration tests:** Backend: Spring Boot Test and MockMvc on temporary SQLite files, 232 tests in 26 classes. Workflows: login, logout, CSRF and session expiry; role enforcement; account management with audit events; audit review filters; reading ingestion with every status code; the built-in and command-line simulators posting to a real server port; dashboard queries; threshold changes, requests, approval, and rejection; threshold alerts opened, updated, and resolved in the reading transaction; acknowledgment with its audit event and rollback when the audit write fails; risk prediction after commit, model fallback, restart recovery, writer-lock retries, and risk alerts; prediction and alert history; schema upgrade of an older database; the OpenAPI document. Frontend: 11 tests run the real app against an in-memory backend that enforces the backend's CSRF, role, and status-code rules (sign-in, session expiry, operator restrictions, acknowledgment, threshold request and approval, user creation, audit filtering).
+- **Coverage:** Frontend 93.3% of statements and 82.5% of branches (`npm run test:coverage`). Backend coverage is not measured yet (no coverage plugin configured).
+- Latest run on 2026-11-21: 370 backend tests and 42 frontend tests, all passed. The Python clients under `testData/SevenZone_Demo/` check the monitoring prototype against a running backend and are not part of these suites.
+
+```bash
+./mvnw test                                   # all backend tests (Windows: .\mvnw.cmd test)
+./mvnw test -Dtest=ThresholdApiTest           # one backend test class
+cd frontend && npm test                       # all frontend tests
+cd frontend && npm run test:coverage          # frontend tests with coverage
+cd frontend && npm run typecheck              # TypeScript check
 ```
 
-Each result has `reading`, `stale` and `prediction`. A pending prediction
-appears as null. A completed prediction provides `riskLevel`, `source`,
-`modelOrRuleVersion`, `predictedAt`, and `qualityFlag`. It also reports
-`currentGapReason`, `historicalExposureIncomplete`, and `lastGapReason`.
-Use `stale` to display the age of the latest measurement. Use the prediction
-quality and current gap reason to explain the latest result. The historical
-flag stays true after recovery because the total observed exposure remains a
-lower bound. Older predictions may have a null current gap reason.
+## Known Issues
 
-Restart with the same database to retain predictions and recover pending
-readings. The SQLite initializer adds `risk_monitoring_runs` to existing
-databases for monitoring start and orderly shutdown markers. Readings and
-predictions already stored keep their original values. The first reading after
-a confirmed orderly interruption uses rules with `MONITORING_INTERRUPTED`.
-A restart without sufficient shutdown evidence uses
-`MONITORING_INTERRUPTION_UNKNOWN`. A gap over 30 seconds during the same run
-uses `INCOMPLETE_HISTORY`. The next valid observed interval can use the model
-again. Unknown intervals contribute no observed exposure, and elapsed storage
-time still runs from the original session start. A monitoring quality flag is
-part of the prediction and does not open a temperature threshold alert.
+- The dashboard does not yet show each zone's current risk level, calculation time, and source (model or rules); the data is available from `GET /api/readings/latest`. It also computes stale data from the browser clock instead of the backend's `stale` flag.
+- There is no admin API to start or end a storage session yet. Sessions are started automatically at startup, ending a session (and resolving or blocking its active alerts) is not possible, and the dashboard always shows each zone's current session.
+- An alert stays active when a device stops reporting, because only a new reading can resolve it.
+- Readings can be viewed at most 6 hours at a time; there is no paged readings list yet.
+- The receipt-to-display time (target: within 5 seconds) has not been measured on the demonstration laptop yet.
+- The risk model learns a simulated rule policy, not real spoilage outcomes. Offline training still labels and drops rows using the older gap policy, while the running backend uses the newer per-reading gap handling.
+- Stopping the backend by killing the process (for example IntelliJ's stop button on Windows) leaves no shutdown marker, so the next gap is flagged as an unconfirmed interruption.
+- The zone-monitoring prototype is a second, separate path with its own database, alerts, and device tokens; the team still has to merge or retire it.
+- The default administrator password is public until changed. The `readings` table grows by about 120,000 rows per day of uptime, with no retention policy.
+- The frontend production bundle is about 600 kB (mostly the charting library); it is not code-split.
 
-Pending prediction work is recorded in `prediction_jobs` in the same
-transaction as each reading. The worker processes bounded batches on startup
-and while running. Temporary failures retry with delays from one to thirty
-seconds. A job whose reading history is invalid is marked terminal and kept
-with its failure code for inspection. A committed prediction removes its job.
-For local diagnostics, query `prediction_jobs` to see retry counts, the next
-attempt timestamp in epoch milliseconds, and terminal outcomes.
-
-To demonstrate missing-artifact fallback independently, stop the first
-demo server and start the application with a different, fresh database
-path and `APP_RISK_MODEL_BASE=classpath:/risk-model/absent`. The new
-readings report `RULES` and `MODEL_MISSING` while threshold alerts
-continue. Remove `APP_RISK_MODEL_BASE` before returning to the default demo.
-The runtime accepts the approved model bytes from a `classpath:` or `file:`
-resource base and checks their SHA-256 before deserialization. An external
-copy must match the bundled model, metadata, and header. Review and update the
-approved version and digest when releasing a replacement model.
-
-When running the JAR from a directory outside the repository, supply the
-simulator fixture path explicitly. For example, in PowerShell:
-
-```powershell
-java -jar 'C:/path with spaces/Smart_Cold_Storage_Monitor.jar' '--app.simulator.data=C:/path with spaces/monitoring_timestamped.jsonl'
-```
-
-If the fixture is absent, the backend starts and logs that the simulator
-could not load the scenario. Review
-[ML training and evaluation](docs/ML_TRAINING_REPORT.md) for the simulated
-policy and its limitations.
-
-## Team Contributions
+## Team Contributions (Phase 3)
 
 | Member | Contributions This Phase |
 |---|---|
-| Xiyan Hou | Spring Boot project setup; SQLite persistence (`DatabaseConfig`, idempotent `schema.sql`, `SqliteExceptionTranslator`); FR-01 authentication (`SecurityConfig`, JSON login/logout handlers, session registry and expiry, CSRF); first-run administrator (`InitialAdminService`, `AdminBootstrapRunner`); account management (`UserAccountService`, `/api/users`); audit logging and admin review (`AuditService`, `AuditReviewService`, `/api/audit-events`); error handling and request IDs; Swagger/OpenAPI docs; tests for these components (`AuthApiTest`, `UserAdminApiTest`, `AuditReviewApiTest`, `AuditServiceTest`, `UserAccountServiceTest`, `PageQueryTest`, `DatabaseConfigTest`, `AdminBootstrapRunnerTest`, `OpenApiDocsTest`); this README. |
-| Qizhen Dong | `monitoring` package: inventory and sensor adapters, `AssessmentEngine` and assessment API, SHT45 frame codec with CRC checks, live telemetry ingestion with device tokens (`LiveTelemetryService`, `LiveTelemetrySecurity`), 5-second zone alert worker, recorded-alert replay endpoint; Spring profiles; five- and seven-zone fixtures and recorded sensor data; Python HTTP test clients; design docs under `docs/`; tests `AssessmentEngineTest`, `MonitoringApiTest`, `MonitoringIntegrationTest`, `SevenZoneReplayTest`. |
-| Tianyi Yin | Model training: dataset preparation, Weka training and evaluation, risk-prediction model (planned for Phase 3) |
-| Alexander Li | Frontend: React and TypeScript dashboard (planned for Phase 3) |
+| Xiyan Hou | Starting the simulator inside the backend and provisioning devices and storage sessions (`setup/SensorSimulatorRunner`, `DeviceSessionService`); device reading ingestion (`ReadingIngestionService`, `ReadingController`, `DeviceIngestionSecurityConfig`, `DeviceCredentialService`); dashboard query `GET /api/readings/query`; device zones and schema upgrade (`SchemaUpgradeOnStartup`); threshold settings with operator requests and admin approval (`ThresholdService`, `ThresholdController`, `ThresholdProperties`); the `alerts` table and threshold alerts (`ThresholdAlertService`); alert history and acknowledgment (`AlertController`, `AlertQueryService`, `AlertAcknowledgmentService`); risk alerts (`RiskAlertService`); prediction history (`PredictionController`, `PredictionQueryService`); SQLite lock handling (`SqliteLockContentionOverride`). Tests: `ReadingIngestionApiTest`, `ReadingQueryApiTest`, `SensorDataSchemaTest`, `SchemaUpgradeOnStartupTest`, `DeviceSessionServiceTest`, `SensorSimulatorRunnerTest`, `ThresholdApiTest`, `ThresholdServiceTest`, `ThresholdAlertServiceTest`, `AlertSchemaTest`, `AlertApiTest`, `AlertAcknowledgmentServiceTest`, `RiskAlertServiceTest`, `PredictionApiTest`, `SqliteLockContentionTest`. Merged the ML and frontend pull requests; this README. |
+| Qizhen Dong | **Java sensor simulator** (`simulator/` package), which sends the sensor readings to the backend: scenario loading with SHT45 frame and 5-second continuity checks (`ScenarioLoader`), the replay loop that stamps each reading with its send time and wraps around at the end of the recording (`ReplayLoop`), HTTP sending with device credentials and retries of the identical payload (`HttpReadingSender`, `DeviceCredentials`), the command line (`SimulatorMain`, `SimulatorOptions`, dry-run and HTTP modes), and the `ScenarioReplay` entry point the backend uses. Tests: `ScenarioLoaderTest`, `ReplayLoopTest`, `HttpReadingSenderTest`, `DeviceCredentialsTest`, `SimulatorMainTest`, `SimulatorOptionsTest`, `ExternalSimulatorEndToEndTest`. **Zone-monitoring prototype** (`monitoring` package, still shipped under the `monitoring-*` profiles): inventory and sensor sources (`SqliteInventorySource`, `JsonlSensorSource`); per-lot condition assessment, live and as of a replay time (`AssessmentEngine`, `AssessmentService`, `AssessmentController`); SHT45 frame decoding with CRC checks (`Sht45Codec`); live telemetry ingestion with HMAC device tokens and its own security filter chain (`LiveTelemetryController`, `LiveTelemetryService`, `LiveTelemetrySecurity`); the 5-second zone alert worker with eight alert types and ordered alert events; accelerated replay of the recorded feed (`RecordedAlertReplayController`); the demo, seven-zone, and live profiles. Tests: `AssessmentEngineTest`, `MonitoringApiTest`, `MonitoringIntegrationTest`, `SevenZoneReplayTest`. |
+| Tianyi Yin | Risk prediction (`ml/` package): synthetic scenario generation and quality checks (`RiskScenarioGenerator`, `RiskScenarioQuality`), shared features (`RiskFeatures`), Weka training and evaluation of Random Forest and logistic regression (`ExpandedRiskTrainingMain`, `RiskTrainingMain`), the shipped model with startup checks (`WekaRiskModel`, `WekaRiskPredictor`), the rules fallback (`RiskRules`, `RulesRiskPredictor`), the prediction worker with retries and restart recovery (`RiskPredictionWorker`, `RiskMonitoringRuns`, `PredictionRepository`), `GET /api/readings/latest`, and the ML training report. Tests: `RiskFeaturesTest`, `WekaRiskModelTest`, `WekaRiskPredictorTest`, `RiskScenarioGenerationTest`, `ExpandedRiskTrainingTest`, `RiskBackendIntegrationTest`, `RiskRestartIntegrationTest`, `RiskMonitoringRecoveryTest`, `RiskPredictionPressureTest`. |
+| Alexander Li | React + TypeScript dashboard (`frontend/`): sign-in and session handling, zone dashboard with trend charts and stale-data states, alerts with acknowledgment, thresholds with requests and approval, user management, audit review; HTTP client with CSRF handling, polling hook, mock backend for development; 42 Vitest tests; frontend README. |
